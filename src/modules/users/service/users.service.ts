@@ -246,7 +246,8 @@ export class UsersService {
       if (target.role === "ADMIN" && target.status === "ACTIVE" && (await this.repo.countOtherActiveAdmins(target.id, tx)) === 0) {
         throw new LastAdminException("remove");
       }
-      if (target.role === "CSR") {
+      // Anyone who works tasks must hand them over first; only a CSR can also hold clients.
+      if (target.role !== "CLIENT") {
         const load = await this.repo.reassignmentLoad(target.id, tx);
         if (load.clients || load.openTasks) throw new ReassignmentRequiredException(target.name, load.clients, load.openTasks);
       }

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import { AuditService } from "../../../common/audit/audit.service";
@@ -22,7 +22,7 @@ import type { PaginatedResponse } from "../../../common/responses/api-response";
 import { clientScope } from "../../../common/scope/scope";
 import { dateOnly, formatDateOnly } from "../../../common/validators/iso-date";
 import { InvitationService } from "../../auth/service/invitation.service";
-import type { CaseBriefDto, ChangeCsrDto, ClientDetailDto, ClientDto, CreateClientDto, ListClientsQueryDto, UpdateClientProfileDto } from "../dto/clients.dto";
+import type { CaseBriefDto, ChangeCsrDto, ClientDetailDto, CreatedClientDto, ClientDto, CreateClientDto, ListClientsQueryDto, UpdateClientProfileDto } from "../dto/clients.dto";
 import { CLIENT_SORT_FIELDS, type ClientRecord } from "../interfaces/clients.interfaces";
 import { ClientsRepository } from "../repository/clients.repository";
 
@@ -80,10 +80,19 @@ function toClientDetail(client: ClientRecord): ClientDetailDto {
   };
 }
 
+interface CreatedRecord {
+  clientId: string;
+  caseNumber: string;
+  link: { url: string; expiresAt: Date };
+  invitedBy: string;
+}
+
 const isUniqueViolation = (error: unknown): boolean => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 
 @Injectable()
 export class ClientsService {
+  private readonly logger = new Logger(ClientsService.name);
+
   constructor(
     private readonly repo: ClientsRepository,
     private readonly audit: AuditService,
@@ -137,12 +146,15 @@ export class ClientsService {
   // ---- create -------------------------------------------------------------------------------------------------
 
   /**
-   * One transaction: the client's user (INVITED), their profile with the next case number, the first case at
-   * "Invitation Sent", the optional CSR assignment and its notification, the audit entries and the invitation email.
-   * The email is the last step. If it (or anything before it) throws, nothing above it is kept, and the counters
-   * are handed back, so a failed invitation leaves no half-created client behind.
+   * One transaction: the client's user (INVITED), their profile with the next case ID, the first case at "Invitation
+   * Sent", the optional CSR assignment and its notification, the audit entries and the invitation link (token). If any
+   * of that throws, nothing is kept and the counters are handed back.
+   *
+   * The invitation EMAIL is sent after the commit. A mail outage must not undo a client that was created correctly:
+   * the failure is logged and audited, the client is kept, and the response says `invitationEmailSent: false` so the
+   * user can use "Resend invitation".
    */
-  async create(c: ActorContext, dto: CreateClientDto): Promise<ClientDetailDto> {
+  async create(c: ActorContext, dto: CreateClientDto): Promise<CreatedClientDto> {
     if (await this.repo.findHoldingEmail(dto.email)) throw new EmailInUseException(dto.email);
 
     const csrId = await this.resolveNewClientCsr(c, dto.csrId);
@@ -152,8 +164,9 @@ export class ClientsService {
     if (!service.active) throw new ServiceInactiveException(service.name);
 
     const name = dto.name?.trim() || dto.email.split("@")[0] || dto.email;
+    let created: CreatedRecord;
     try {
-      const clientId = await this.repo.transaction(async (tx) => {
+      created = await this.repo.transaction(async (tx) => {
         const prefix = await this.notifications.casePrefix(tx);
         // Always the same order (client, then case), so two parallel creations can queue on the counters but never deadlock.
         const clientNumber = await this.counters.next("client", tx);
@@ -176,20 +189,47 @@ export class ClientsService {
           await this.record(c, `Assigned CSR ${csr?.name ?? ""}`, caseNumber, "cases", tx);
           await this.notifications.notify(tx, { userIds: [csrId], text: `New client assigned to you: ${name}`, link: "clients" });
         }
-
-        await this.invitations.issueAndSend(
-          { userId: client.id, email: dto.email, name, role: "CLIENT", invitedBy: await this.actorName(c, tx), note: dto.note, caseNumber },
-          tx,
-        );
-        return client.id;
+        const link = await this.invitations.issue(client.id, tx);
+        return { clientId: client.id, caseNumber, link, invitedBy: await this.actorName(c, tx) };
       });
-      // Read back without the scope filter: a CSR who assigned the new client to a colleague can't otherwise see it.
-      const created = await this.repo.findOne({ id: clientId });
-      if (!created) throw new ResourceNotFoundException("client", clientId);
-      return toClientDetail(created);
     } catch (error) {
       if (isUniqueViolation(error)) throw new EmailInUseException(dto.email);
       throw error;
+    }
+
+    const invitationEmailSent = await this.sendInvitationEmail(c, created, { email: dto.email, name, note: dto.note });
+    // Read back without the scope filter: a CSR who assigned the new client to a colleague can't otherwise see it.
+    const row = await this.repo.findOne({ id: created.clientId });
+    if (!row) throw new ResourceNotFoundException("client", created.clientId);
+    return { ...toClientDetail(row), invitationEmailSent };
+  }
+
+  /** After the commit. Never throws: a failure is logged and audited, and reported to the caller as `false`. */
+  private async sendInvitationEmail(c: ActorContext, created: CreatedRecord, who: { email: string; name: string; note?: string }): Promise<boolean> {
+    try {
+      await this.invitations.sendInvitation(
+        { userId: created.clientId, email: who.email, name: who.name, role: "CLIENT", invitedBy: created.invitedBy, note: who.note, caseNumber: created.caseNumber },
+        created.link,
+      );
+      return true;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.error(`The invitation email to ${who.email} could not be sent: ${reason}`);
+      try {
+        await this.audit.record({
+          actorId: c.actor.id,
+          actorRole: c.actor.role,
+          action: `Invitation email to ${who.email} could not be sent (client kept; use Resend invitation)`,
+          target: created.caseNumber,
+          ok: false,
+          category: "users",
+          requestId: c.requestId,
+          ipAddress: c.ipAddress,
+        });
+      } catch (auditError) {
+        this.logger.error(`Could not audit the failed invitation email: ${auditError instanceof Error ? auditError.message : String(auditError)}`);
+      }
+      return false;
     }
   }
 

@@ -69,3 +69,76 @@ function caseRoleScope(actor: ScopeActor): Prisma.CaseWhereInput {
       return { id: MATCH_NOTHING };
   }
 }
+
+/**
+ * Which tasks the actor may see.
+ *   Admin, Manager   every task on a case they can see
+ *   CSR              every task on the cases of their own clients
+ *   Compliance       tasks assigned to them, created by them, or on a case they own (the prototype's "allTasks" is
+ *                    Admin and Manager only, so Compliance does not see the whole list)
+ *   Client           only tasks marked for the client, on their own cases
+ */
+export function taskScope(actor: ScopeActor): Prisma.TaskWhereInput {
+  const onVisibleCase: Prisma.TaskWhereInput = { case: { is: caseScope(actor) } };
+  switch (actor.role) {
+    case "ADMIN":
+    case "MANAGER":
+    case "CSR":
+      return onVisibleCase;
+    case "COMPLIANCE":
+      return { AND: [onVisibleCase, { OR: [{ assigneeId: actor.id }, { createdById: actor.id }, { case: { is: { ownerId: actor.id } } }] }] };
+    case "CLIENT":
+      return { AND: [onVisibleCase, { visibility: "CLIENT" }] };
+    default:
+      return { id: MATCH_NOTHING };
+  }
+}
+
+/** Which documents the actor may see (a CSR sees them in a list, but the permission table keeps their content from them). */
+export function documentScope(actor: ScopeActor, options: ScopeOptions = {}): Prisma.DocumentWhereInput {
+  const includeRemoved = Boolean(options.includeRemoved) && seesRemoved(actor.role);
+  const visibility: Prisma.DocumentWhereInput = includeRemoved ? {} : { deletedAt: null, client: { is: { deletedAt: null } } };
+  return { AND: [visibility, documentRoleScope(actor)] };
+}
+
+function documentRoleScope(actor: ScopeActor): Prisma.DocumentWhereInput {
+  switch (actor.role) {
+    case "ADMIN":
+    case "MANAGER":
+    case "COMPLIANCE":
+      return {};
+    case "CSR":
+      return { client: { is: { clientProfile: { is: { csrId: actor.id } } } } };
+    case "CLIENT":
+      return { clientId: actor.id };
+    default:
+      return { id: MATCH_NOTHING };
+  }
+}
+
+/** Follow-ups: Admin and Manager see all, a CSR only their own. Nobody else has follow-ups. */
+export function followUpScope(actor: ScopeActor): Prisma.FollowUpWhereInput {
+  switch (actor.role) {
+    case "ADMIN":
+    case "MANAGER":
+      return {};
+    case "CSR":
+      return { csrId: actor.id };
+    default:
+      return { id: MATCH_NOTHING };
+  }
+}
+
+/** CSR reports to Compliance: a CSR sees their own, Compliance, Manager and Admin see all. A client sees none. */
+export function reportScope(actor: ScopeActor): Prisma.ReportWhereInput {
+  switch (actor.role) {
+    case "ADMIN":
+    case "MANAGER":
+    case "COMPLIANCE":
+      return {};
+    case "CSR":
+      return { csrId: actor.id };
+    default:
+      return { id: MATCH_NOTHING };
+  }
+}

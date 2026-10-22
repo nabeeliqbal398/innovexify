@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { config as loadDotenv } from "dotenv";
@@ -22,3 +24,7 @@ process.env.REFRESH_COOKIE_SAMESITE = "strict";
 process.env.REFRESH_COOKIE_SECURE = "false";
 process.env.LOGIN_MAX_ATTEMPTS = "5";
 process.env.LOGIN_LOCKOUT_MINUTES = "15";
+
+// Uploaded files go to a throw-away folder, never to the real STORAGE_DIR.
+process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "innovexify-test-storage-"));
+process.env.MAX_UPLOAD_MB = "25";

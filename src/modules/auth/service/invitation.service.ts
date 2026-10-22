@@ -16,6 +16,16 @@ import type { InvitationLookupDto } from "../dto/auth.dto";
 
 const DAY_MS = 86_400_000;
 
+export interface InvitationMailDetails {
+  userId: string;
+  email: string;
+  name: string;
+  role: Role;
+  invitedBy: string;
+  note?: string;
+  caseNumber?: string | null;
+}
+
 @Injectable()
 export class InvitationService {
   constructor(
@@ -43,11 +53,17 @@ export class InvitationService {
    * Issue the link and email it through MailService. Pass the caller's transaction to make the token part of it:
    * if the mail can't be handed over this throws, and the caller's transaction (user, token, ...) rolls back.
    */
-  async issueAndSend(
-    invite: { userId: string; email: string; name: string; role: Role; invitedBy: string; note?: string; caseNumber?: string | null },
-    tx?: Prisma.TransactionClient,
-  ): Promise<{ expiresAt: Date }> {
-    const { url, expiresAt } = await this.issue(invite.userId, tx);
+  async issueAndSend(invite: InvitationMailDetails, tx?: Prisma.TransactionClient): Promise<{ expiresAt: Date }> {
+    const link = await this.issue(invite.userId, tx);
+    await this.sendInvitation(invite, link, tx);
+    return { expiresAt: link.expiresAt };
+  }
+
+  /**
+   * Emails an already-issued link; rejects when the mail can't be handed over. The clients module issues the link
+   * inside its transaction and calls this after the commit, so a mail outage never undoes a created client.
+   */
+  async sendInvitation(invite: InvitationMailDetails, link: { url: string; expiresAt: Date }, tx?: Prisma.TransactionClient): Promise<void> {
     const companyName = await this.notifications.companyName(tx);
     await this.mail.send(
       invitationMail({
@@ -56,13 +72,12 @@ export class InvitationService {
         role: invite.role,
         companyName,
         invitedBy: invite.invitedBy,
-        url,
-        expiresAt,
+        url: link.url,
+        expiresAt: link.expiresAt,
         note: invite.note,
         caseNumber: invite.caseNumber,
       }),
     );
-    return { expiresAt };
   }
 
   /** What the invitation page shows before the person chooses a password. Never reveals the token's hash. */

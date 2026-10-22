@@ -24,6 +24,7 @@ export type Permission =
   | "docsAccess"
   | "docsManage"
   | "docsReview"
+  | "deleteDocument"
   | "conversation"
   | "attachStaff"
   | "reportSend"
@@ -75,6 +76,8 @@ export const PERMS: Record<Permission, Role[]> = {
   docsAccess: ["ADMIN", "MANAGER", "COMPLIANCE", "CLIENT"],
   docsManage: ["ADMIN", "MANAGER", "COMPLIANCE"],
   docsReview: ["ADMIN", "MANAGER", "COMPLIANCE"],
+  // Backend-only rule: deleting is a soft delete (the record and file are kept), and only the roles that run the portal may do it.
+  deleteDocument: ["ADMIN", "MANAGER"],
   conversation: [...ALL_STAFF, "CLIENT"],
   attachStaff: ["ADMIN", "MANAGER", "COMPLIANCE"],
   reportSend: ["CSR"],
@@ -121,6 +124,7 @@ export const REASON: Record<Permission | "default", string> = {
     "CSRs can't open, preview, download or upload client documents, by any route. You can still see whether a document is required, awaiting review, approved or needs a correction.",
   docsManage: "Only Admin, Manager and Compliance can upload or request client documents.",
   docsReview: "Only Admin, Manager and Compliance can review documents.",
+  deleteDocument: "Only Admin and Manager can delete documents. They are kept for the record and hidden from everyone else.",
   viewClient: "You can only open records you're authorized to see.",
   viewClients: "You can only open records you're authorized to see.",
   updateEmail:
@@ -248,7 +252,7 @@ export const ACCESS_MATRIX: ReadonlyArray<readonly [string, Permission]> = [
 export function auditCategoryOf(perm?: Permission): string {
   if (!perm) return "";
   if (/^invite|removeUser|suspendUser|updateEmail/.test(perm)) return "users";
-  if (/^docs|attachStaff/.test(perm)) return "docs";
+  if (/^docs|attachStaff|deleteDocument/.test(perm)) return "docs";
   if (/^ticket/.test(perm)) return "tickets";
   if (/complianceMilestones|manageProjects|rollbackStage|editCase|caseNotes|assignNewClient|reassignClient|followUpTask|complianceTask|manageTasks|filingTracker|followups/.test(perm)) {
     return "cases";

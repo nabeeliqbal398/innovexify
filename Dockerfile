@@ -18,6 +18,8 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node prisma ./prisma
 COPY --chown=node:node package.json ./
+# Uploaded files live here. Mount a volume on it (docker-compose.prod.yml does) so they outlive the container.
+RUN mkdir -p /app/storage && chown node:node /app/storage
 USER node
 EXPOSE 4000
 CMD ["node", "dist/main.js"]

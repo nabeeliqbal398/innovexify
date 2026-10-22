@@ -1,4 +1,4 @@
-import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from "@nestjs/common";
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor, StreamableFile } from "@nestjs/common";
 import type { Response } from "express";
 import { map, type Observable } from "rxjs";
 
@@ -23,6 +23,8 @@ export class TransformInterceptor<T> implements NestInterceptor<T, SuccessEnvelo
 
     return next.handle().pipe(
       map((result) => {
+        // A file download is the bytes themselves, not a JSON envelope.
+        if (result instanceof StreamableFile) return result as never;
         const base = {
           success: true as const,
           statusCode: response.statusCode,

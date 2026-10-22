@@ -2,7 +2,7 @@
 
 NestJS + Prisma + PostgreSQL. PostgreSQL runs **only in Docker**; you do not need a local Postgres install.
 
-The full schema is in place. Modules are added one at a time: auth, users, clients and cases so far (each has a
+The full schema is in place. Modules are added one at a time: auth, users, clients, cases, tasks, follow-ups, documents (with file storage), filings and reports so far (each has a
 `SPECS.md` with its endpoints, rules and error codes; shared pieces are in `src/common/SPECS.md`).
 
 ## Run with Docker (Windows PowerShell)
@@ -52,6 +52,7 @@ and the database port is not published.
 - Auth: bearer access token plus single-use refresh tokens with reuse detection. See `src/modules/auth/SPECS.md`.
 - Lists take `?page` (>= 1), `?limit` (1 to 100), `?sort` and `?order`. Values outside the range are rejected with a message on
   the field, never clamped. A record outside your role's scope returns 404, not 403.
+- Uploaded documents are stored by `StorageService` (local disk in `STORAGE_DIR`). See "File storage" below.
 - Invitation emails go through `MailService`. In development `LogMailService` writes the email, including the invitation
   link, to the API log instead of sending it; replace it in `MailModule` to use SMTP.
 - Seeded accounts (for example `sarah.bennett@example.com`, Admin) all use the `SEED_PASSWORD` from your `.env`.
@@ -82,6 +83,25 @@ The refresh token lives in an `httpOnly` cookie. `REFRESH_COOKIE_SAMESITE` sets 
 The cookie is always `Secure` when `NODE_ENV=production`; elsewhere set `REFRESH_COOKIE_SECURE=true` to force it. The API
 **refuses to start** with `REFRESH_COOKIE_SAMESITE=none` unless the cookie is Secure, and says why, rather than letting
 browsers silently discard every refresh token. (This replaces the earlier `COOKIE_SAMESITE` name.)
+
+### File storage
+
+Client documents are uploaded to the API (`POST /api/v1/documents/:id/upload`, multipart, field `file`) and stored on disk, not in the database.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `STORAGE_DIR` | `./storage` | Where files are kept. Created at startup. Keep it outside any web-served folder; nothing in the API serves it. |
+| `MAX_UPLOAD_MB` | `25` | Largest accepted file, 1 to 100. A larger file is refused with a message that names the limit. |
+
+- Accepted: PDF, PNG, JPG and DOCX, decided by the file's **contents** (not its name or the type the browser claims). A program
+  renamed `.pdf`, a double extension such as `invoice.pdf.exe`, an empty file and a file whose type doesn't match its extension
+  are each refused with their own message.
+- Files are saved under a random key, never their own name. The original name is kept, cleaned, in the database only.
+- Downloads go through the API (`GET /api/v1/documents/:id/download`), which checks who is asking and audits the download.
+- **Back up `STORAGE_DIR` together with the database.** A document row without its file is a broken document. With Docker,
+  `docker-compose.prod.yml` mounts a named volume (`uploads`) on `/app/storage`.
+- The virus-scan step is a placeholder (`NoopScanner`); it marks where a real scanner plugs in. `LocalDiskStorage` can be replaced by an
+  S3 implementation without touching the rest of the code (see `src/common/SPECS.md`).
 
 ## Troubleshooting
 

@@ -50,3 +50,58 @@ format, then length), not the one that happened to run first.
 ## Errors (`constants/error-codes.ts`, `exceptions/`)
 Every rule has its own `errorCode` and a message written for the person using the app. `CONCURRENT_MODIFICATION` replaces the
 unused `VERSION_CONFLICT`.
+
+## File storage and uploads (`storage/`)
+
+Used by the documents module; written so other modules (message attachments, branding logo) can reuse it.
+
+**Layers**
+- `StorageService` (abstract) with `put(key, bytes)`, `open(key)` (stream plus size) and `remove(key)`. `LocalDiskStorage` is the
+  implementation today. Services never touch a path or a bucket.
+- `VirusScanner` (abstract): called on every file after the content checks and before anything is stored. `NoopScanner` accepts
+  everything and is **not a security control**, only the place the real scan goes. A scanner that throws makes the upload fail
+  (nothing is accepted unscanned).
+- `UploadService.store(file, record)`: check, scan, store under a random key, run `record` (the database write), and delete the
+  stored file if `record` fails. `check(file)` runs the rules without storing.
+- `UploadErrorsInterceptor`: turns multer's generic 413/400 into `FILE_TOO_LARGE` / `FILE_REQUIRED`.
+- `file-policy.ts`: the rules, as pure functions (unit-tested): `inspectUpload`, `sanitizeFileName`, `sniffKind`,
+  `attachmentDisposition`.
+
+**Where files live.** `STORAGE_DIR` (default `./storage`), created at startup with mode 0700. Never inside a served folder:
+nothing in the API serves it statically, and there is no directory listing. Files are written to
+`<STORAGE_DIR>/<first two characters of the key>/<key>`, with the key a random UUID. The original name is never used on disk.
+`pathOf` accepts only a key that is exactly a UUID and checks the resolved path is inside the root, so `../`, absolute paths,
+separators and anything else are refused before a path is built. `put` writes a temporary file then hard-links it into place,
+so a reader never sees half a file and an existing key can never be overwritten. In Docker, mount a volume on `/app/storage`
+(`docker-compose.prod.yml` does) and back it up with the database.
+
+**Swapping to S3.** Implement `StorageService` (`put` -> PutObject, `open` -> GetObject stream with ContentLength, `remove` ->
+DeleteObject) and change the `useClass` in `StorageModule`. Keep the bucket private: downloads still go through the API, which
+does the permission check, the audit entry and sets the headers.
+
+**What is accepted** (decided on content, never on the browser's claimed type):
+- Extensions `pdf`, `png`, `jpg`, `jpeg`, `docx`; maximum size `MAX_UPLOAD_MB` (default 25, range 1-100; a file of exactly that
+  size is accepted, one byte more is not).
+- The first bytes must be that type's signature: `%PDF-`, the PNG header, `FF D8 FF`, or a ZIP holding `[Content_Types].xml` and a
+  `word/` folder (a bare ZIP renamed `.docx` is refused). The detected type becomes the stored `mimeType` and the download's
+  `Content-Type`.
+- Checked in this order, each with its own code and message: empty (`FILE_EMPTY`), too large (`FILE_TOO_LARGE`), no usable name
+  (`FILE_NAME_INVALID`), more than one extension such as `report.pdf.exe` or `invoice.exe.pdf` (`FILE_DOUBLE_EXTENSION`),
+  extension not allowed (`FILE_TYPE_NOT_ALLOWED`), contents not an accepted type (`FILE_CONTENT_NOT_ALLOWED`), contents that
+  don't match the extension (`FILE_TYPE_MISMATCH`), then the scan (`FILE_REJECTED_BY_SCAN`).
+- The kept name is sanitised: folders, control characters and `< > : " | ? *` removed, leading/trailing dots and spaces trimmed,
+  at most 255 characters (the extension survives truncation), a UTF-8 name that arrived as Latin-1 repaired.
+
+**Downloads.** Streamed by the API after the permission check, with `Content-Disposition: attachment` built from the sanitised name,
+`X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store`, and `Content-Length`. The response is the raw bytes, not the
+JSON envelope (the TransformInterceptor passes a `StreamableFile` through).
+
+## Other additions in Phase 3
+- **`scope/`:** `taskScope`, `documentScope`, `followUpScope`, `reportScope` next to `clientScope` and `caseScope` (rules in each
+  module's SPECS). Out of scope is always a 404.
+- **`rules/duplicate-document.ts`:** the prototype's `findDuplicateDocument` (`normalizeTitle`, `findDuplicateRequest`), used by
+  tasks and document requests.
+- **`utils/dates.ts`:** `todayUtc`, `addDays`, `isoDay`. "Today", "overdue" and "not in the future" all mean the server's UTC
+  calendar day, never the caller's clock.
+- **Permissions:** `deleteDocument` (Admin, Manager) is a backend-only addition for soft-deleting documents, like `rollbackStage`.
+- **Errors:** new codes for tasks, follow-ups, documents, files, filings and reports are listed in each module's SPECS.

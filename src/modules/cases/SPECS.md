@@ -17,7 +17,7 @@ Base `/api/v1`. All need a bearer token. `:id` is the case's id (not the `PRJ-` 
 | GET | `/cases` | anyone, scoped | `?stage&status&priority&ownerId&clientId&serviceId&deadlineFrom&deadlineTo&search&sort&order&page&limit` | page of cases |
 | GET | `/cases/:id` | anyone, scoped | none | case + `events`, visible `notes`, `filings`, `tasks { total, open, overdue }` |
 | GET | `/cases/:id/events` | anyone, scoped | `?order&page&limit` | page of timeline events |
-| POST | `/cases` | `editCase` (Admin, Manager) | `{ clientId, serviceId, deadline, priority?, businessName?, formationState? }` | the case |
+| POST | `/cases` | `editCase` (Admin, Manager) | `{ clientId, serviceId, deadline, priority?, businessName?, formationState? }` | the case (refused with `CASE_ALREADY_EXISTS` only while the client has an **open** case) |
 | PATCH | `/cases/:id` | `editCase` (Admin, Manager) | `{ version, priority?, deadline?, ownerId?, serviceId?, status? }` | the case |
 | POST | `/cases/:id/stage` | `complianceMilestones` (Admin, Manager, Compliance) | `{ targetStage, version, filingConfirmation?, note? }` | the case |
 | POST | `/cases/:id/notes` | `caseNotes` (staff) | `{ text, visibility?: "STAFF" \| "COMPLIANCE" }` | the note |
@@ -87,7 +87,7 @@ no notes.
 ## Edge cases handled
 Skip, same-stage and backward moves; rollback without a reason; missing, blank and already-recorded filing numbers; stale
 and simultaneous versions (including two requests that both read version 1); completed and removed cases; Compliance
-outside the document stages; a client with a case already (`CASE_ALREADY_EXISTS`); switched-off service; owner who isn't
+outside the document stages; a client with an open case already (`CASE_ALREADY_EXISTS`: open means not completed and not removed, so a client whose cases are all completed can have a new one); switched-off service; owner who isn't
 Compliance or isn't active; notification switches off; mail outage after commit; case outside the caller's scope.
 
 ## Error codes

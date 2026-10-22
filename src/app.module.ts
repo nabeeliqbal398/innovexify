@@ -7,6 +7,7 @@ import { PermissionsModule } from "./common/permissions/permissions.guard";
 import { AuditModule } from "./common/audit/audit.service";
 import { CounterModule } from "./common/counter/counter.service";
 import { MailModule } from "./common/mail/mail.service";
+import { StorageModule } from "./common/storage/storage.module";
 import { NotificationsModule } from "./common/notifications/notification.service";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
 import { LoggingInterceptor } from "./common/interceptors/logging.interceptor";
@@ -18,6 +19,11 @@ import { HealthController } from "./health/health.controller";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CasesModule } from "./modules/cases/cases.module";
 import { ClientsModule } from "./modules/clients/clients.module";
+import { DocumentsModule } from "./modules/documents/documents.module";
+import { FilingsModule } from "./modules/filings/filings.module";
+import { FollowUpsModule } from "./modules/followups/followups.module";
+import { ReportsModule } from "./modules/reports/reports.module";
+import { TasksModule } from "./modules/tasks/tasks.module";
 import { UsersModule } from "./modules/users/users.module";
 import { PrismaModule } from "./prisma/prisma.module";
 
@@ -39,10 +45,16 @@ import { PrismaModule } from "./prisma/prisma.module";
     CounterModule,
     MailModule,
     NotificationsModule,
+    StorageModule,
     AuthModule,
     UsersModule,
     ClientsModule,
     CasesModule,
+    TasksModule,
+    FollowUpsModule,
+    DocumentsModule,
+    FilingsModule,
+    ReportsModule,
     // After AuthModule, so its guard runs after JwtAuthGuard and RolesGuard.
     PermissionsModule,
   ],

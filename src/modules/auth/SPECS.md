@@ -39,8 +39,9 @@ All paths are under `/api/v1`. Every response uses the standard envelope.
 - **Invitations:** a link works once, until `INVITATION_TTL_DAYS` (7). Accepting sets the password, activates the
   account (clients also get `joinedAt`), burns the token and signs the person in, atomically. The assigned CSR is
   notified. `InvitationService.issue(userId, tx?)` creates a link and retires earlier unused ones;
-  `issueAndSend(...)` also emails it through `MailService`. The users and clients modules call it inside their own
-  transaction, so a failed email rolls the whole invitation back.
+  `issueAndSend(...)` also emails it through `MailService`; `sendInvitation(...)` emails a link that was already issued.
+  The users module sends inside its transaction (a failed email rolls the invitation back); the clients module issues the
+  link inside its transaction and sends after the commit, so a mail outage never undoes a created client.
 - **Refresh cookie:** `httpOnly`, path `/api/v1/auth`. `SameSite` comes from `REFRESH_COOKIE_SAMESITE` (`strict` default, `lax`,
   `none`). `Secure` is always on in production, and elsewhere with `REFRESH_COOKIE_SECURE=true`. `none` is **rejected at
   startup** unless the cookie is Secure, because browsers drop an insecure `SameSite=None` cookie.

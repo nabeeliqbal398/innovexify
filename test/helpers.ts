@@ -1,11 +1,15 @@
+import { promises as fsp } from "node:fs";
+import path from "node:path";
+
 import type { INestApplication } from "@nestjs/common";
 import { Test, type TestingModuleBuilder } from "@nestjs/testing";
-import type { CaseStage, CaseStatus, Priority, Role, UserStatus } from "@prisma/client";
+import type { CaseStage, CaseStatus, DocStatus, Priority, Role, UserStatus } from "@prisma/client";
 import * as argon2 from "argon2";
 import request from "supertest";
 
 import { AppModule } from "../src/app.module";
 import { MailService, type MailMessage } from "../src/common/mail/mail.service";
+import { LocalDiskStorage, StorageService } from "../src/common/storage/storage.service";
 import { TokenService } from "../src/modules/auth/service/token.service";
 import { configureApp } from "../src/app.setup";
 import { AppConfig } from "../src/config/app-config";
@@ -231,4 +235,99 @@ export function api(t: TestApp, authorization?: string) {
     patch: (url: string) => wrap(t.http().patch(url)),
     delete: (url: string) => wrap(t.http().delete(url)),
   };
+}
+
+// ---- Phase 3 helpers: files, tasks, documents -----------------------------------------------------------------
+
+export const FILES = {
+  /** Minimal but genuine signatures: the policy looks at the first bytes, so these are what a real file starts with. */
+  pdf: (): Buffer => Buffer.concat([Buffer.from("%PDF-1.7\n1 0 obj <</Type /Catalog>> endobj\ntrailer <</Root 1 0 R>>\n%%EOF\n")]),
+  png: (): Buffer => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]),
+  jpg: (): Buffer => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64, 9)]),
+  docx: (): Buffer => Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("[Content_Types].xml"), Buffer.from("word/document.xml"), Buffer.alloc(32)]),
+  /** A Windows program: starts with "MZ". */
+  exe: (): Buffer => Buffer.concat([Buffer.from("MZ"), Buffer.from("This program cannot be run in DOS mode."), Buffer.alloc(64)]),
+};
+
+/** Every file currently in the storage folder (the folder is shared by the whole test process). */
+export async function storedFiles(t: TestApp): Promise<string[]> {
+  const root = (t.app.get(StorageService) as LocalDiskStorage).root;
+  const out: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else out.push(full);
+    }
+  };
+  await walk(root);
+  return out;
+}
+
+export async function clearStorage(t: TestApp): Promise<void> {
+  const root = (t.app.get(StorageService) as LocalDiskStorage).root;
+  await fsp.rm(root, { recursive: true, force: true });
+  await fsp.mkdir(root, { recursive: true });
+}
+
+interface NewTask {
+  caseId: string;
+  createdById: string;
+  assigneeId: string;
+  title?: string;
+  due?: string;
+  done?: boolean;
+  type?: "COMPLIANCE" | "CSR_FOLLOW_UP" | "OPERATIONS";
+  visibility?: "INTERNAL" | "CLIENT";
+  priority?: Priority;
+}
+
+export function makeTask(prisma: PrismaService, input: NewTask) {
+  return prisma.task.create({
+    data: {
+      caseId: input.caseId,
+      title: input.title ?? "A task",
+      type: input.type ?? "OPERATIONS",
+      visibility: input.visibility ?? "INTERNAL",
+      priority: input.priority ?? "NORMAL",
+      done: input.done ?? false,
+      due: new Date(`${input.due ?? "2030-01-01"}T00:00:00.000Z`),
+      createdById: input.createdById,
+      assigneeId: input.assigneeId,
+      ...(input.done ? { completedById: input.assigneeId, completedAt: new Date() } : {}),
+    },
+  });
+}
+
+interface NewDocument {
+  clientId: string;
+  name?: string;
+  status?: DocStatus;
+  requestedById?: string;
+  fileName?: string;
+  storageKey?: string;
+  mimeType?: string;
+  reason?: string;
+}
+
+export function makeDocument(prisma: PrismaService, input: NewDocument) {
+  return prisma.document.create({
+    data: {
+      clientId: input.clientId,
+      name: input.name ?? "Proof of address",
+      status: input.status ?? "REQUESTED",
+      requestedById: input.requestedById,
+      fileName: input.fileName ?? "",
+      storageKey: input.storageKey ?? null,
+      mimeType: input.mimeType ?? null,
+      sizeBytes: input.storageKey ? 10 : null,
+      reason: input.reason ?? "",
+    },
+  });
+}
+
+/** Today (UTC) shifted by `days`, as YYYY-MM-DD: the same date the server uses for "overdue" and "not in the future". */
+export function dayOffset(days: number): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + days)).toISOString().slice(0, 10);
 }

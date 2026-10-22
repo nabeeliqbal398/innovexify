@@ -48,8 +48,10 @@ without `order` means ascending. Removed accounts only appear with `status=REMOV
 - **Last Admin:** the last active Admin cannot be suspended or removed (`LAST_ADMIN_PROTECTED`). The check runs inside the
   transaction after `SELECT ... FOR UPDATE` on every active Admin row, so two Admins acting on each other at the same
   moment cannot both succeed.
-- **Removing a CSR** with assigned clients or open tasks is refused (`REASSIGNMENT_REQUIRED`); the message says how many of
-  each ("2 assigned clients and 3 open tasks"). Reassign first (`PATCH /clients/:id/csr`).
+- **Removing staff with work still on their plate** is refused (`REASSIGNMENT_REQUIRED`): a CSR with assigned clients or
+  open tasks, any other staff member with open tasks. The message says how many of each ("2 assigned clients and 3 open
+  tasks"). Reassign first (`PATCH /clients/:id/csr`, `PATCH /tasks/:id` with a new assignee). **Suspending is not blocked by
+  open tasks**: a compromised account must be stoppable at once, and suspension keeps everything in place.
 - **Suspension and removal are immediate.** Refresh tokens are revoked in the same transaction; the access token is
   refused on its next use because `JwtAuthGuard` re-reads the account status on every request.
 - **Removal is soft:** status `REMOVED`, `deletedAt` set, every record kept. Pending invitations are expired. Removing a

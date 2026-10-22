@@ -190,3 +190,8 @@ export class ClientDetailDto extends ClientDto {
   @ApiProperty({ type: [CaseBriefDto] }) cases!: CaseBriefDto[];
   @ApiProperty() caseSummary!: { total: number; open: number; completed: number };
 }
+
+export class CreatedClientDto extends ClientDetailDto {
+  @ApiProperty({ description: 'False when the client was created but the invitation email could not be sent: use "Resend invitation".' })
+  invitationEmailSent!: boolean;
+}

@@ -33,7 +33,12 @@ export class ClientsController {
   @ApiOperation({ summary: "Invite a client: creates the account, the case ID, the first case and the invitation email in one transaction" })
   async create(@Body() dto: CreateClientDto, @Req() request: RequestContext) {
     const client = await this.clients.create(actorContextOf(request), dto);
-    return ApiResponse.of(client, `Client invited. The invitation was sent to ${client.email}.`);
+    return ApiResponse.of(
+      client,
+      client.invitationEmailSent
+        ? `Client invited. The invitation was sent to ${client.email}.`
+        : `Client created, but the invitation email to ${client.email} could not be sent. Use "Resend invitation" to try again.`,
+    );
   }
 
   @Patch(":id/profile")

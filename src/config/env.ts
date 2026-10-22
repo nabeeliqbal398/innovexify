@@ -43,6 +43,10 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  /** Where uploaded files live. Never inside a public or served directory; created at startup. Relative paths resolve from the working directory. */
+  STORAGE_DIR: z.string().trim().min(1).default("./storage"),
+  /** Largest accepted upload, in megabytes (25 matches the "files over 25 MB" rule in the product). */
+  MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(100).default(25),
   DATABASE_URL: z
     .string({ error: "DATABASE_URL is not set." })
     .regex(/^postgres(ql)?:\/\//, "DATABASE_URL must start with postgresql://")

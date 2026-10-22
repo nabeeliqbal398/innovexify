@@ -386,13 +386,31 @@ describe("cases (e2e)", () => {
       expect(res.body.data.stage).toBe("INVITATION_SENT");
     });
 
-    it("refuses a second case for a client who already has one, naming their case ID", async () => {
+    it("refuses a second case for a client who already has an open one, naming their case ID", async () => {
       const res = await as(admin).post("/api/v1/cases").send({ clientId: client1.id, serviceId: "llc", deadline: "2027-05-01" });
       expect(res.status).toBe(409);
       expect(res.body.errorCode).toBe("CASE_ALREADY_EXISTS");
       const caseNumber = (await t.prisma.clientProfile.findUniqueOrThrow({ where: { userId: client1.id } })).caseNumber;
       expect(res.body.message).toContain(caseNumber);
+      expect(res.body.message).toContain("open case");
       expect((await t.prisma.counter.findUniqueOrThrow({ where: { key: "case" } })).value).toBe(100);
+    });
+
+    it("lets a client whose cases are all completed have a new one", async () => {
+      await t.prisma.case.update({ where: { id: case1.id }, data: { stage: "COMPLETED", status: "COMPLETED", completedAt: new Date() } });
+      const res = await as(admin).post("/api/v1/cases").send({ clientId: client1.id, serviceId: "corp", deadline: "2027-05-01" });
+      expect(res.status).toBe(201);
+      expect(res.body.data).toMatchObject({ number: 101, service: { id: "corp" }, stage: "CLIENT_ONBOARDING" });
+      expect(await t.prisma.case.count({ where: { clientId: client1.id } })).toBe(2);
+      // The new one is open now, so a third is refused again.
+      const third = await as(admin).post("/api/v1/cases").send({ clientId: client1.id, serviceId: "llc", deadline: "2027-05-01" });
+      expect(third.body.errorCode).toBe("CASE_ALREADY_EXISTS");
+    });
+
+    it("does not count a removed case as open", async () => {
+      await t.prisma.case.update({ where: { id: case1.id }, data: { deletedAt: new Date() } });
+      const res = await as(admin).post("/api/v1/cases").send({ clientId: client1.id, serviceId: "llc", deadline: "2027-05-01" });
+      expect(res.status).toBe(201);
     });
 
     it("refuses a switched-off or unknown service, a missing date, and a removed or unknown client", async () => {

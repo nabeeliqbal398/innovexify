@@ -59,7 +59,8 @@ export class CasesRepository {
   }
 
   openCaseOf(clientId: string, db: Db = this.prisma): Promise<{ id: string } | null> {
-    return db.case.findFirst({ where: { clientId, deletedAt: null }, select: { id: true } });
+    // Open = not removed and not completed. A client whose cases are all completed may get a new one.
+    return db.case.findFirst({ where: { clientId, deletedAt: null, stage: { not: "COMPLETED" } }, select: { id: true } });
   }
 
   findService(id: string, db: Db = this.prisma) {

@@ -196,13 +196,36 @@ describe("clients (e2e)", () => {
       );
     });
 
-    it("rolls everything back when the invitation email can't be sent", async () => {
-      const before = { clients: await counter("client"), cases: await counter("case"), users: await t.prisma.user.count() };
+    it("keeps the client when the invitation email can't be sent, says so, audits it and allows a resend", async () => {
       t.mail.failWith = new Error("SMTP is down");
-      const res = await as(admin).post("/api/v1/clients").send({ email: "doomed@test.dev", csrId: csr1.id });
-      expect(res.status).toBe(500);
-      expect(res.body.errorCode).toBe("INTERNAL_ERROR");
-      await expectNothingLeftBehind("doomed@test.dev", before);
+      const res = await as(admin).post("/api/v1/clients").send({ email: "kept@test.dev", name: "Kay Kept", csrId: csr1.id });
+      expect(res.status).toBe(201);
+      expect(res.body.data).toMatchObject({ email: "kept@test.dev", status: "INVITED", invitationEmailSent: false, case: { stage: "INVITATION_SENT" } });
+      expect(res.body.message).toBe('Client created, but the invitation email to kept@test.dev could not be sent. Use "Resend invitation" to try again.');
+
+      // Everything else was committed.
+      const user = await t.prisma.user.findFirstOrThrow({ where: { email: "kept@test.dev" }, include: { clientProfile: true, clientCases: true } });
+      expect(user.clientProfile?.csrId).toBe(csr1.id);
+      expect(user.clientCases).toHaveLength(1);
+      expect(await t.prisma.invitationToken.count({ where: { userId: user.id } })).toBe(1);
+      expect(await counter("client")).toBe(41);
+      expect(t.mail.sent).toHaveLength(0);
+      const failure = await t.prisma.auditLog.findFirstOrThrow({ where: { action: { startsWith: "Invitation email to kept@test.dev could not be sent" } } });
+      expect(failure).toMatchObject({ ok: false, category: "users", actorId: admin.id });
+
+      // "Resend invitation" works once the mail system is back, and the first (never delivered) link is retired.
+      t.mail.failWith = null;
+      const resend = await as(admin).post(`/api/v1/users/${user.id}/resend-invitation`).send();
+      expect(resend.status).toBe(200);
+      expect(t.mail.sent).toHaveLength(1);
+      expect(t.mail.sent[0]).toMatchObject({ to: "kept@test.dev", kind: "invitation" });
+      expect((await t.http().get(`/api/v1/auth/invitations/${t.mail.inviteTokenFor("kept@test.dev")}`)).status).toBe(200);
+    });
+
+    it("reports invitationEmailSent: true when the email went out", async () => {
+      const res = await as(admin).post("/api/v1/clients").send({ email: "sent@test.dev" });
+      expect(res.body.data.invitationEmailSent).toBe(true);
+      expect(res.body.message).toBe("Client invited. The invitation was sent to sent@test.dev.");
     });
 
     it("rolls everything back when the notification step throws", async () => {

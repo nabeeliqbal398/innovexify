@@ -33,9 +33,13 @@ Implemented once in `common/scope/scope.ts`.
 - **Create = one transaction:** user (`INVITED`, `invitedById`), profile with the next case ID (`CASE-<year>-<NNNN>` from
   counter `client`, prefix from the company setting), the first case (`PRJ-<n>` from counter `case`) at **Invitation Sent**,
   status **Awaiting Client**, a "Case created" timeline event, the CSR assignment with its audit entry and in-app
-  notification ("New client assigned to you: ..."), three audit entries (invited, case created, CSR assigned), and the
-  invitation email as the **last** step. If the email or any step throws, everything rolls back, including the counters, so a
-  failed attempt leaves no half-created client and no gap in the numbers.
+  notification ("New client assigned to you: ..."), three audit entries (invited, case created, CSR assigned) and the
+  invitation link (a hashed, single-use token). If any of that throws (the notification insert, say), everything rolls back,
+  including the counters, so a failed attempt leaves no half-created client and no gap in the numbers.
+- **The invitation email is sent after the commit.** A mail outage must not undo a client who was created correctly. If
+  sending fails the client is kept, the failure is logged and written to the audit log (`ok = false`, category `users`), and
+  the `201` response carries `data.invitationEmailSent: false` and a message telling the user to use "Resend invitation"
+  (`POST /users/:id/resend-invitation`). On success `invitationEmailSent` is `true`.
 - **Numbers are atomic:** `UPDATE "Counter" SET value = value + 1 ... RETURNING value` inside the transaction, always
   `client` then `case`. 20 parallel creations get 20 distinct, gap-free numbers.
 - **CSR on create:** a CSR must name one (`CSR_REQUIRED`; `"me"` means themselves; they may name a colleague). Admin and
@@ -62,10 +66,10 @@ the limits above come from `people.ts` and the database column sizes.
 ## Edge cases handled
 Duplicate email in another case; assigning a non-CSR, a suspended CSR, an unknown CSR, the same CSR again; client with no
 CSR (list filter, later assignment); editing a removed client; phone and address length limits and boundaries; a CSR who
-creates a client for a colleague (cannot open it afterwards); mail or notification failure mid-create; 20 parallel creates;
+creates a client for a colleague (cannot open it afterwards); notification failure mid-create (rolls back); invitation email failure after the commit (client kept); 20 parallel creates;
 a client editing someone else's profile (404) or restricted fields (403).
 
 ## Error codes
 `EMAIL_IN_USE` 409, `CSR_REQUIRED` 422, `INVALID_CSR_ASSIGNMENT` 422, `CSR_UNCHANGED` 422, `SERVICE_INACTIVE` 422,
 `USER_REMOVED` 409, `PERMISSION_DENIED` 403, `RESOURCE_NOT_FOUND` 404, `VALIDATION_FAILED` 422, `INTERNAL_ERROR` 500 (create
-rolled back because a step failed).
+rolled back because a step inside the transaction failed; an email failure is NOT an error, see `invitationEmailSent`).
