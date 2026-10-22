@@ -197,21 +197,21 @@ export class ClientsService {
       throw error;
     }
 
-    const invitationEmailSent = await this.sendInvitationEmail(c, created, { email: dto.email, name, note: dto.note });
+    const invitationEmail = await this.sendInvitationEmail(c, created, { email: dto.email, name, note: dto.note });
     // Read back without the scope filter: a CSR who assigned the new client to a colleague can't otherwise see it.
     const row = await this.repo.findOne({ id: created.clientId });
     if (!row) throw new ResourceNotFoundException("client", created.clientId);
-    return { ...toClientDetail(row), invitationEmailSent };
+    return { ...toClientDetail(row), invitationEmailSent: invitationEmail === "sent", invitationEmail };
   }
 
   /** After the commit. Never throws: a failure is logged and audited, and reported to the caller as `false`. */
-  private async sendInvitationEmail(c: ActorContext, created: CreatedRecord, who: { email: string; name: string; note?: string }): Promise<boolean> {
+  private async sendInvitationEmail(c: ActorContext, created: CreatedRecord, who: { email: string; name: string; note?: string }): Promise<"sent" | "switched-off" | "failed"> {
     try {
-      await this.invitations.sendInvitation(
+      const outcome = await this.invitations.sendInvitation(
         { userId: created.clientId, email: who.email, name: who.name, role: "CLIENT", invitedBy: created.invitedBy, note: who.note, caseNumber: created.caseNumber },
         created.link,
       );
-      return true;
+      return outcome;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       this.logger.error(`The invitation email to ${who.email} could not be sent: ${reason}`);
@@ -229,7 +229,7 @@ export class ClientsService {
       } catch (auditError) {
         this.logger.error(`Could not audit the failed invitation email: ${auditError instanceof Error ? auditError.message : String(auditError)}`);
       }
-      return false;
+      return "failed";
     }
   }
 

@@ -35,9 +35,11 @@ export class ClientsController {
     const client = await this.clients.create(actorContextOf(request), dto);
     return ApiResponse.of(
       client,
-      client.invitationEmailSent
+      client.invitationEmail === "sent"
         ? `Client invited. The invitation was sent to ${client.email}.`
-        : `Client created, but the invitation email to ${client.email} could not be sent. Use "Resend invitation" to try again.`,
+        : client.invitationEmail === "switched-off"
+          ? `Client created. Invitation emails are switched off in Notifications & automation, so none was sent to ${client.email}. Switch them on and use "Resend invitation".`
+          : `Client created, but the invitation email to ${client.email} could not be sent. Use "Resend invitation" to try again.`,
     );
   }
 

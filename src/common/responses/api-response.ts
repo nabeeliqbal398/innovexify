@@ -32,13 +32,32 @@ export class PaginatedResponse<T> {
   }
 }
 
+export interface CursorMeta {
+  limit: number;
+  /** Older items exist beyond this page: pass `nextBefore` as `before` to read them (for a `since` page: newer items exist). */
+  hasMore: boolean;
+  /** Id of the oldest item on this page (pass it as `before`), or null for an empty page. */
+  nextBefore: string | null;
+  /** Id of the newest item on this page, to poll with `since`. Null for an empty page. */
+  newest: string | null;
+}
+
+/** A page read by cursor (messages, notifications): stable while new items arrive, unlike page numbers. */
+export class CursorResponse<T> {
+  constructor(
+    readonly items: T[],
+    readonly meta: CursorMeta,
+    readonly message?: string,
+  ) {}
+}
+
 /** The envelope every success response is sent in. */
 export interface SuccessEnvelope<T> {
   success: true;
   statusCode: number;
   message: string;
   data: T;
-  meta?: PaginationMeta;
+  meta?: PaginationMeta | CursorMeta;
   timestamp: string;
   path: string;
 }

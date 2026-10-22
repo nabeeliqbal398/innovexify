@@ -145,7 +145,7 @@ export class DocumentsService {
       await this.record(c, `Requested document: ${dto.name}`, client.clientProfile?.caseNumber ?? "", tx);
       return { id: created.id, emails: recipients };
     });
-    await this.notifications.emailAfterCommit(emails, text);
+    await this.notifications.emailAfterCommit(emails, text, "docreq");
     return toDocumentDto(await this.requireById(id), c.actor.role);
   }
 

@@ -47,6 +47,14 @@ const envSchema = z.object({
   STORAGE_DIR: z.string().trim().min(1).default("./storage"),
   /** Largest accepted upload, in megabytes (25 matches the "files over 25 MB" rule in the product). */
   MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(100).default(25),
+  /** Messages one person may send per minute (a specific message is returned when it is exceeded). */
+  MESSAGE_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(1).max(1000).default(30),
+  /** Global-search requests one person may make per minute. */
+  SEARCH_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(1).max(1000).default(60),
+  /** How long after a ticket is resolved its client may still reopen it. */
+  TICKET_REOPEN_DAYS: z.coerce.number().int().min(0).max(365).default(7),
+  /** How long analytics results are cached in memory. */
+  ANALYTICS_CACHE_SECONDS: z.coerce.number().int().min(0).max(3600).default(60),
   DATABASE_URL: z
     .string({ error: "DATABASE_URL is not set." })
     .regex(/^postgres(ql)?:\/\//, "DATABASE_URL must start with postgresql://")

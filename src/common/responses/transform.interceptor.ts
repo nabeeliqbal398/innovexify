@@ -3,7 +3,7 @@ import type { Response } from "express";
 import { map, type Observable } from "rxjs";
 
 import type { RequestContext } from "../interfaces/request-context";
-import { ApiResponse, PaginatedResponse, type SuccessEnvelope } from "./api-response";
+import { ApiResponse, CursorResponse, PaginatedResponse, type SuccessEnvelope } from "./api-response";
 
 const DEFAULT_MESSAGES: Record<string, string> = {
   GET: "Loaded successfully.",
@@ -33,6 +33,9 @@ export class TransformInterceptor<T> implements NestInterceptor<T, SuccessEnvelo
         };
         const fallback = DEFAULT_MESSAGES[request.method] ?? "Done.";
         if (result instanceof PaginatedResponse) {
+          return { ...base, message: result.message ?? fallback, data: result.items, meta: result.meta };
+        }
+        if (result instanceof CursorResponse) {
           return { ...base, message: result.message ?? fallback, data: result.items, meta: result.meta };
         }
         if (result instanceof ApiResponse) {

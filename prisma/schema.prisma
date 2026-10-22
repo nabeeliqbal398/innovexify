@@ -397,6 +397,7 @@ model Case {
   @@index([priority])
   @@index([deadline])
   @@index([lastActivityAt])
+  @@index([completedAt])
   @@index([deletedAt])
 }
 
@@ -457,6 +458,7 @@ model Task {
   @@index([createdById])
   @@index([due])
   @@index([done])
+  @@index([completedAt])
   @@index([priority])
 }
 
@@ -498,6 +500,7 @@ model Document {
   @@index([requestedById])
   @@index([reviewedById])
   @@index([submittedAt])
+  @@index([reviewedAt])
   @@index([deletedAt])
 }
 
@@ -526,7 +529,11 @@ model Message {
   clientId       String
   senderId       String
   text           String   @db.VarChar(5000)
+  /// Sanitised original name of the attachment, if any. The bytes are in object storage under attachmentKey.
   attachmentName String?  @db.VarChar(255)
+  attachmentKey  String?  @db.VarChar(255)
+  attachmentMime String?  @db.VarChar(100)
+  attachmentSize Int?
   createdAt      DateTime @default(now())
 
   client User @relation("MessageClient", fields: [clientId], references: [id], onDelete: Restrict)
@@ -606,6 +613,7 @@ model ReportEvent {
 
   @@index([reportId, at])
   @@index([byId])
+  @@index([at])
 }
 
 // ---------------------------------------------------------------------------
@@ -688,6 +696,7 @@ model Ticket {
   @@index([priority])
   @@index([escalated])
   @@index([createdAt])
+  @@index([resolvedAt])
 }
 
 model TicketMessage {
@@ -745,6 +754,7 @@ model FollowUp {
   @@index([csrId, status])
   @@index([due])
   @@index([status])
+  @@index([doneAt])
 }
 
 model Interaction {
@@ -760,6 +770,7 @@ model Interaction {
 
   @@index([clientId, at])
   @@index([byId])
+  @@index([at])
 }
 
 /// Manual filing tracker. Nothing here is read from or sent to a state system.

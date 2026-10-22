@@ -52,6 +52,11 @@ and the database port is not published.
 - Auth: bearer access token plus single-use refresh tokens with reuse detection. See `src/modules/auth/SPECS.md`.
 - Lists take `?page` (>= 1), `?limit` (1 to 100), `?sort` and `?order`. Values outside the range are rejected with a message on
   the field, never clamped. A record outside your role's scope returns 404, not 403.
+- Phase 4 modules (each has a `SPECS.md`): messages, announcements, tickets, notifications, audit (Admin only, CSV export), company, services,
+  automation (notification triggers), access matrix, dashboard (`GET /dashboard/overview`), analytics (`GET /analytics`, at most 24 months, cached
+  `ANALYTICS_CACHE_SECONDS`) and global search (`GET /search?q=`). Conversations and notifications page by cursor (`before`, `since`);
+  sending messages and searching are rate-limited per person (`MESSAGE_RATE_LIMIT_PER_MIN`, `SEARCH_RATE_LIMIT_PER_MIN`). A reopened ticket window
+  is `TICKET_REOPEN_DAYS`. In-memory caches and limits are per instance; see `src/common/SPECS.md` for the Redis swap.
 - Uploaded documents are stored by `StorageService` (local disk in `STORAGE_DIR`). See "File storage" below.
 - Invitation emails go through `MailService`. In development `LogMailService` writes the email, including the invitation
   link, to the API log instead of sending it; replace it in `MailModule` to use SMTP.

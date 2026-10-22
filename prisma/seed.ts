@@ -79,6 +79,23 @@ const priority = (label: string): Priority => enumKey(label) as Priority;
 const ticketStatus = (label: string): TicketStatus => enumKey(label) as TicketStatus;
 const interaction = (label: string): InteractionType => enumKey(label) as InteractionType;
 
+/**
+ * The category of a seeded audit entry, inferred from its text exactly as the first prototype's audit view did
+ * (frontend components/features/system/audit-category.ts), so the category filter works on the demo data.
+ */
+function auditCategoryOfAction(action: string): string {
+  const t = action.toLowerCase();
+  if (/signed in|sign-in|session/.test(t)) return "auth";
+  if (/invit|accepted/.test(t)) return "invites";
+  if (/email|suspend|reactivat|remove|role|profile/.test(t)) return "users";
+  if (/document|upload|download|preview|approved|rejected|requested|shared/.test(t)) return "docs";
+  if (/tkt-|ticket/.test(t)) return "tickets";
+  if (/prj-|case|stage|task|assign|filing|follow-up|note/.test(t)) return "cases";
+  if (/rpt-|report/.test(t)) return "reports";
+  if (/brand|prefix|template|trigger|service/.test(t)) return "settings";
+  return "other";
+}
+
 function requireSeedPassword(): string {
   const value = process.env.SEED_PASSWORD;
   if (!value) throw new Error("SEED_PASSWORD is not set. Add it to .env (see .env.example) before seeding.");
@@ -633,7 +650,7 @@ async function seedSystem(): Promise<void> {
     await prisma.auditLog.upsert({
       where: { id },
       update: {},
-      create: { id, actorId: actor, actorRole: ROLE_OF[actor], action, target, ok, category: ok ? "" : "docs", createdAt: at(days, hour) },
+      create: { id, actorId: actor, actorRole: ROLE_OF[actor], action, target, ok, category: ok ? auditCategoryOfAction(action) : "docs", createdAt: at(days, hour) },
     });
   }
 

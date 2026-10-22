@@ -194,4 +194,7 @@ export class ClientDetailDto extends ClientDto {
 export class CreatedClientDto extends ClientDetailDto {
   @ApiProperty({ description: 'False when the client was created but the invitation email could not be sent: use "Resend invitation".' })
   invitationEmailSent!: boolean;
+
+  @ApiProperty({ enum: ["sent", "failed", "switched-off"], description: '"switched-off": the "Client invited" trigger is off in Notifications & automation.' })
+  invitationEmail!: "sent" | "failed" | "switched-off";
 }

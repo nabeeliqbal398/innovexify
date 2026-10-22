@@ -105,3 +105,25 @@ JSON envelope (the TransformInterceptor passes a `StreamableFile` through).
   calendar day, never the caller's clock.
 - **Permissions:** `deleteDocument` (Admin, Manager) is a backend-only addition for soft-deleting documents, like `rollbackStage`.
 - **Errors:** new codes for tasks, follow-ups, documents, files, filings and reports are listed in each module's SPECS.
+
+## Phase 4 additions
+- **Cursor pagination (`pagination/cursor.dto.ts`, `CursorResponse`):** conversations and notifications page by `?limit` (1 to 100, default 30),
+  `before` and `since` (an id or an ISO time), newest first; both at once is refused. `meta` is `{ limit, hasMore, nextBefore, newest }`. A cursor that
+  isn't in the caller's own data is a 422 on the field, not a hint that it exists elsewhere.
+- **Rate limits (`rate-limit/`):** `@RateLimit("messages" | "search")` with `RateLimitGuard`: a one-minute window **per signed-in person**
+  (`MESSAGE_RATE_LIMIT_PER_MIN` 30, `SEARCH_RATE_LIMIT_PER_MIN` 60), 429 with "wait N seconds". In memory per instance; with several instances
+  swap the `Map` for a shared store such as Redis (the interface is "hits in the last minute for this key").
+- **Scope in SQL (`scope/scope-sql.ts`):** `clientIdInScope`, `caseInScope`, `taskInScope` return the same rules as `clientScope`, `caseScope`, `taskScope`
+  as SQL fragments for the aggregates (dashboard, analytics, search, unread counts). `test/scope-sql.e2e-spec.ts` compares them with the Prisma scopes for
+  every role. `ticketScope` is the Prisma scope for tickets. Note: the SQL form of `clientIdInScope` also hides a removed client's records from Admin and
+  Manager, where `ticketScope` lets them still open those tickets; aggregates therefore count live clients only.
+- **Notification triggers (`notifications/`):** `NotificationService.trigger(key)` and `emailAfterCommit(recipients, text, trigger?)`: a switched-off trigger
+  (`inv`, `msg`, `ticket`, `docreq`; `sec` can't be switched off) suppresses the **email** only, never the in-app notification. The mail `template` comes from the
+  trigger's chosen option. Notification links are view names from an allowlist (`notification-links.ts`), never URLs; `safeLink` re-checks on the way out.
+- **Uploads (`storage/upload-options.ts`):** the multer options shared by documents and message attachments.
+- **Errors:** new codes for messages, announcements, tickets, company, services and automation are listed in each module's SPECS
+  (`exceptions/phase4.exceptions.ts`).
+- **Body size and parse errors:** JSON bodies may be up to 400 KB (for a base64 logo); a larger body is a 413 `PAYLOAD_TOO_LARGE` and unparseable JSON a 400, both with
+  plain messages (the filter maps body-parser errors, which are not `HttpException`s).
+- **Response scan in tests:** every JSON response in the e2e suite is scanned for `passwordHash`, `tokenHash`, `storageKey`, `attachmentKey` and `refreshToken`
+  (the last allowed only with `ALLOW_BODY_REFRESH`); a hit fails the test that made the request (`test/forbidden-fields.ts`, `test/setup-forbidden.ts`).

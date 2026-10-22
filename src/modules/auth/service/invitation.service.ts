@@ -53,17 +53,20 @@ export class InvitationService {
    * Issue the link and email it through MailService. Pass the caller's transaction to make the token part of it:
    * if the mail can't be handed over this throws, and the caller's transaction (user, token, ...) rolls back.
    */
-  async issueAndSend(invite: InvitationMailDetails, tx?: Prisma.TransactionClient): Promise<{ expiresAt: Date }> {
+  async issueAndSend(invite: InvitationMailDetails, tx?: Prisma.TransactionClient): Promise<{ expiresAt: Date; emailSent: boolean }> {
     const link = await this.issue(invite.userId, tx);
-    await this.sendInvitation(invite, link, tx);
-    return { expiresAt: link.expiresAt };
+    const outcome = await this.sendInvitation(invite, link, tx);
+    return { expiresAt: link.expiresAt, emailSent: outcome === "sent" };
   }
 
   /**
    * Emails an already-issued link; rejects when the mail can't be handed over. The clients module issues the link
    * inside its transaction and calls this after the commit, so a mail outage never undoes a created client.
    */
-  async sendInvitation(invite: InvitationMailDetails, link: { url: string; expiresAt: Date }, tx?: Prisma.TransactionClient): Promise<void> {
+  async sendInvitation(invite: InvitationMailDetails, link: { url: string; expiresAt: Date }, tx?: Prisma.TransactionClient): Promise<"sent" | "switched-off"> {
+    // "Client invited" in Notifications & automation governs this email. The link itself exists either way (it can be resent).
+    const trigger = await this.notifications.trigger("inv", tx);
+    if (!trigger.enabled) return "switched-off";
     const companyName = await this.notifications.companyName(tx);
     await this.mail.send(
       invitationMail({
@@ -76,8 +79,10 @@ export class InvitationService {
         expiresAt: link.expiresAt,
         note: invite.note,
         caseNumber: invite.caseNumber,
+        template: trigger.template || undefined,
       }),
     );
+    return "sent";
   }
 
   /** What the invitation page shows before the person chooses a password. Never reveals the token's hash. */

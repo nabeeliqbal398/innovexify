@@ -10,6 +10,8 @@ import type { Env } from "./config/env";
 export function configureApp(app: INestApplication, env: Env): void {
   const express = app as NestExpressApplication;
   if (env.TRUST_PROXY) express.set("trust proxy", true);
+  // JSON bodies are small except a company logo sent as a data URL (200 KB of image is about 270 KB of base64).
+  express.useBodyParser("json", { limit: "400kb" });
   app.use(helmet());
   app.use(cookieParser());
   app.enableCors({ origin: env.CORS_ORIGINS, credentials: true });

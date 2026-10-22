@@ -6,6 +6,7 @@ module.exports = {
   testMatch: ["<rootDir>/test/**/*.e2e-spec.ts"],
   transform: { "^.+\.ts$": ["ts-jest", { tsconfig: "tsconfig.json", diagnostics: false }] },
   setupFiles: ["<rootDir>/test/setup-env.ts"],
+  setupFilesAfterEnv: ["<rootDir>/test/setup-forbidden.ts"],
   testTimeout: 30000,
   maxWorkers: 1,
 };

@@ -7,6 +7,8 @@ export interface MailMessage {
   text: string;
   /** What kind of email this is, for logs and later for per-template switches. */
   kind: "invitation" | "email-change" | "notification";
+  /** The email template chosen for this kind of message in Notifications & automation, when one applies. */
+  template?: string;
 }
 
 /**
@@ -24,7 +26,7 @@ export class LogMailService extends MailService {
   private readonly logger = new Logger("Mail");
 
   send(message: MailMessage): Promise<void> {
-    this.logger.log(`[email not sent: LogMailService] ${message.kind} to ${message.to}\nSubject: ${message.subject}\n${message.text}`);
+    this.logger.log(`[email not sent: LogMailService] ${message.kind}${message.template ? ` (${message.template})` : ""} to ${message.to}\nSubject: ${message.subject}\n${message.text}`);
     return Promise.resolve();
   }
 }

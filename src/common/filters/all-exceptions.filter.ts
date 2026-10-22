@@ -88,6 +88,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
       // Framework messages (such as "Cannot GET /x") are replaced with plain ones; throttling keeps its own.
       return { status, errorCode: fallback.code, message: fallback.message };
     }
+    // Errors from the body parser are not HttpExceptions: a body over the limit, or JSON that doesn't parse.
+    const type = (exception as { type?: unknown } | null)?.type;
+    if (type === "entity.too.large") return { status: 413, errorCode: ErrorCode.PAYLOAD_TOO_LARGE, message: STATUS_CODES[413]?.message ?? "That request is too large." };
+    if (type === "entity.parse.failed") return { status: 400, errorCode: ErrorCode.BAD_REQUEST, message: "The request body isn't valid JSON. Check what you sent and try again." };
     return {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       errorCode: ErrorCode.INTERNAL_ERROR,

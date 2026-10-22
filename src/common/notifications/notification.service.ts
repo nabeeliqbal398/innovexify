@@ -3,7 +3,16 @@ import type { NotificationCategory, Prisma } from "@prisma/client";
 
 import { PrismaService } from "../../prisma/prisma.service";
 import { MailService } from "../mail/mail.service";
+import { safeLink } from "./notification-links";
 import { notificationMail } from "../mail/templates";
+
+/** The automation triggers (Notifications & automation). Each one governs one kind of EMAIL; in-app notifications are never affected. */
+export type TriggerKey = "inv" | "msg" | "ticket" | "docreq" | "sec";
+
+export interface TriggerState {
+  enabled: boolean;
+  template: string;
+}
 
 export interface NotifyInput {
   /** Recipients. Empty values and duplicates are ignored. */
@@ -55,22 +64,52 @@ export class NotificationService {
 
     const inApp = users.filter((u) => prefOf.get(u.id)?.inApp ?? true);
     if (inApp.length) {
-      await tx.notification.createMany({ data: inApp.map((u) => ({ userId: u.id, text: input.text.slice(0, 500), link: input.link })) });
+      await tx.notification.createMany({ data: inApp.map((u) => ({ userId: u.id, text: input.text.slice(0, 500), link: safeLink(input.link) })) });
     }
     return input.category ? users.filter((u) => prefOf.get(u.id)?.email ?? true) : [];
   }
 
-  /** Sends the notification email to each recipient. Failures are logged and never thrown: use after the commit. */
-  async emailAfterCommit(recipients: readonly EmailRecipient[], text: string): Promise<void> {
+  /**
+   * Whether the trigger's emails are switched on, and which template to use. A security trigger is always on, whatever its
+   * stored switch says. A trigger that has no row yet counts as on.
+   */
+  async trigger(key: TriggerKey, db: Prisma.TransactionClient = this.prisma): Promise<TriggerState> {
+    const row = await db.notificationTrigger.findUnique({ where: { key }, select: { enabled: true, security: true, template: true } });
+    return { enabled: row ? row.enabled || row.security : true, template: row?.template ?? "" };
+  }
+
+  /**
+   * Sends the notification email to each recipient. Failures are logged and never thrown: use after the commit.
+   * With a `trigger`, a trigger that has been switched off suppresses the email (the in-app notification already written is not touched).
+   */
+  async emailAfterCommit(recipients: readonly EmailRecipient[], text: string, trigger?: TriggerKey): Promise<void> {
     if (recipients.length === 0) return;
+    let template: string | undefined;
+    if (trigger) {
+      const state = await this.trigger(trigger);
+      if (!state.enabled) {
+        this.logger.log(`Trigger "${trigger}" is off: ${recipients.length} email(s) not sent.`);
+        return;
+      }
+      template = state.template || undefined;
+    }
     const companyName = await this.companyName();
     await Promise.all(
       recipients.map((r) =>
-        this.mail.send(notificationMail({ to: r.email, name: r.name, text, companyName })).catch((error: unknown) => {
+        this.mail.send(notificationMail({ to: r.email, name: r.name, text, companyName, template })).catch((error: unknown) => {
           this.logger.warn(`Could not email ${r.email}: ${error instanceof Error ? error.message : String(error)}`);
         }),
       ),
     );
+  }
+
+  /** Everyone who works a client's case (the prototype's teamFor): active Admin, Manager and Compliance users, plus the assigned CSR. */
+  async teamOf(clientId: string, db: Prisma.TransactionClient = this.prisma): Promise<string[]> {
+    const [staff, profile] = await Promise.all([
+      db.user.findMany({ where: { role: { in: ["ADMIN", "MANAGER", "COMPLIANCE"] }, status: "ACTIVE", deletedAt: null }, select: { id: true } }),
+      db.clientProfile.findUnique({ where: { userId: clientId }, select: { csrId: true } }),
+    ]);
+    return [...staff.map((u) => u.id), ...(profile?.csrId ? [profile.csrId] : [])];
   }
 
   async companyName(db: Prisma.TransactionClient = this.prisma): Promise<string> {

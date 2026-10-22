@@ -11,6 +11,7 @@ const ROLE_LABEL: Record<Role, string> = {
 };
 
 export interface InvitationMailInput {
+  template?: string;
   to: string;
   name: string;
   role: Role;
@@ -33,7 +34,7 @@ export function invitationMail(input: InvitationMailInput): MailMessage {
     `Set your password and sign in: ${input.url}`,
     `This link works once and expires on ${input.expiresAt.toUTCString()}.`,
   ];
-  return { to: input.to, kind: "invitation", subject: `You're invited to ${input.companyName}`, text: lines.join("\n") };
+  return { to: input.to, kind: "invitation", template: input.template, subject: `You're invited to ${input.companyName}`, text: lines.join("\n") };
 }
 
 export function emailChangedMail(input: { to: string; name: string; newEmail: string; companyName: string }): MailMessage {
@@ -45,10 +46,11 @@ export function emailChangedMail(input: { to: string; name: string; newEmail: st
   };
 }
 
-export function notificationMail(input: { to: string; name: string; text: string; companyName: string }): MailMessage {
+export function notificationMail(input: { to: string; name: string; text: string; companyName: string; template?: string }): MailMessage {
   return {
     to: input.to,
     kind: "notification",
+    template: input.template,
     subject: `${input.companyName}: ${input.text}`.slice(0, 200),
     text: `Hi ${input.name},\n\n${input.text}\n\nSign in to ${input.companyName} for details.`,
   };

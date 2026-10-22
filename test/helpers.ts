@@ -14,6 +14,7 @@ import { TokenService } from "../src/modules/auth/service/token.service";
 import { configureApp } from "../src/app.setup";
 import { AppConfig } from "../src/config/app-config";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { findForbiddenFields, violations } from "./forbidden-fields";
 import { ProbeController } from "./probe.controller";
 
 export const PASSWORD = "Correct-Horse-9Battery";
@@ -50,6 +51,16 @@ export async function createApp(
     const moduleRef = await builder.compile();
     const app = moduleRef.createNestApplication();
     configureApp(app, app.get(AppConfig).env);
+    // Every JSON response is scanned for fields that must never leave the server (hashes, storage keys, refresh tokens).
+    app.use((_req: unknown, res: { json: (body: unknown) => unknown; req?: { originalUrl?: string } }, next: () => void) => {
+      const original = res.json.bind(res);
+      res.json = (body: unknown) => {
+        const allowRefresh = process.env.ALLOW_BODY_REFRESH === "true";
+        for (const finding of findForbiddenFields(body, allowRefresh)) violations.push({ ...finding, url: res.req?.originalUrl ?? "" });
+        return original(body);
+      };
+      next();
+    });
     await app.init();
 
     return {
@@ -90,11 +101,19 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
     prisma.$executeRawUnsafe("SET LOCAL session_replication_role = replica"),
     ...tables.map((table) => prisma.$executeRawUnsafe(`DELETE FROM "${table}"`)),
   ]);
-  await prisma.company.upsert({ where: { id: 1 }, update: { name: "Innovexify", casePrefix: "CASE" }, create: { id: 1, name: "Innovexify", casePrefix: "CASE" } });
+  await prisma.company.upsert({ where: { id: 1 }, update: { name: "Innovexify", casePrefix: "CASE", logo: "" }, create: { id: 1, name: "Innovexify", casePrefix: "CASE" } });
   const service = (id: string, name: string, active: boolean) => ({ id, name, category: "Formation", description: `${name} (test)`, requirements: [], stages: [], active });
   for (const s of [service("llc", "LLC formation", true), service("corp", "Corporation formation", true), service("address", "Business address", false)]) {
     await prisma.service.upsert({ where: { id: s.id }, update: { active: s.active }, create: s });
   }
+  const triggers = [
+    { key: "inv", name: "Client invited", template: "Invitation v3", templateOptions: ["Invitation v3", "Invitation (plain)"], security: false },
+    { key: "msg", name: "New client message", template: "Message waiting", templateOptions: ["Message waiting"], security: false },
+    { key: "ticket", name: "Ticket status changed", template: "Ticket update", templateOptions: ["Ticket update", "Ticket update (short)"], security: false },
+    { key: "docreq", name: "Document requested", template: "Document request", templateOptions: ["Document request"], security: false },
+    { key: "sec", name: "Security event", template: "Security alert", templateOptions: ["Security alert"], security: true },
+  ];
+  for (const trigger of triggers) await prisma.notificationTrigger.create({ data: { ...trigger, enabled: true } });
   for (const [key, value] of [["case", 100], ["client", 40], ["ticket", 1000], ["report", 200], ["filing", 0]] as const) {
     await prisma.counter.upsert({ where: { key }, update: { value }, create: { key, value } });
   }
@@ -233,6 +252,7 @@ export function api(t: TestApp, authorization?: string) {
     get: (url: string) => wrap(t.http().get(url)),
     post: (url: string) => wrap(t.http().post(url)),
     patch: (url: string) => wrap(t.http().patch(url)),
+    put: (url: string) => wrap(t.http().put(url)),
     delete: (url: string) => wrap(t.http().delete(url)),
   };
 }

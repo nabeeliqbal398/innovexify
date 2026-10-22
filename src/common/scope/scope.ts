@@ -142,3 +142,23 @@ export function reportScope(actor: ScopeActor): Prisma.ReportWhereInput {
       return { id: MATCH_NOTHING };
   }
 }
+
+/**
+ * Which tickets the actor may see: Admin and Manager every one (including those of removed clients), Compliance every one of an
+ * existing client, a CSR those of their own clients (the prototype's `ticketsStaff` rule), a client their own.
+ */
+export function ticketScope(actor: ScopeActor): Prisma.TicketWhereInput {
+  const liveClient: Prisma.TicketWhereInput = actor.role === "ADMIN" || actor.role === "MANAGER" ? {} : { client: { is: { deletedAt: null } } };
+  switch (actor.role) {
+    case "ADMIN":
+    case "MANAGER":
+    case "COMPLIANCE":
+      return liveClient;
+    case "CSR":
+      return { AND: [liveClient, { client: { is: { clientProfile: { is: { csrId: actor.id } } } } }] };
+    case "CLIENT":
+      return { AND: [liveClient, { clientId: actor.id }] };
+    default:
+      return { id: MATCH_NOTHING };
+  }
+}
