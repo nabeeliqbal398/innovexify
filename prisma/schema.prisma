@@ -1,0 +1,852 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums. Display strings from the frontend are kept with @map so the database
+// holds the same labels the UI shows.
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  MANAGER
+  CSR
+  COMPLIANCE
+  CLIENT
+}
+
+enum UserStatus {
+  ACTIVE    @map("Active")
+  INVITED   @map("Invited")
+  SUSPENDED @map("Suspended")
+  REMOVED   @map("Removed")
+}
+
+/// Formation stages in order. COMP_STAGES (the stages Compliance may move) is a rule in the service layer:
+/// DOCUMENTS_PENDING, DOCUMENTS_UNDER_REVIEW, READY_FOR_FILING.
+enum CaseStage {
+  INVITATION_SENT          @map("Invitation Sent")
+  CLIENT_ONBOARDING        @map("Client Onboarding")
+  INFORMATION_REQUIRED     @map("Information Required")
+  DOCUMENTS_PENDING        @map("Documents Pending")
+  DOCUMENTS_UNDER_REVIEW   @map("Documents Under Review")
+  READY_FOR_FILING         @map("Ready for Filing")
+  STATE_FILING_IN_PROGRESS @map("State Filing in Progress")
+  STATE_APPROVAL_RECEIVED  @map("State Approval Received")
+  EIN_PROCESSING           @map("EIN Processing")
+  POST_FORMATION_DOCUMENTS @map("Post-Formation Documents")
+  COMPLETED                @map("Completed")
+}
+
+enum CaseStatus {
+  NOT_STARTED        @map("Not Started")
+  IN_PROGRESS        @map("In Progress")
+  AWAITING_CLIENT    @map("Awaiting Client")
+  UNDER_REVIEW       @map("Under Review")
+  FILING_IN_PROGRESS @map("Filing in Progress")
+  COMPLETED          @map("Completed")
+  ON_HOLD            @map("On Hold")
+  ACTIVE             @map("Active")
+  BLOCKED            @map("Blocked")
+}
+
+enum Priority {
+  LOW    @map("Low")
+  NORMAL @map("Normal")
+  HIGH   @map("High")
+  URGENT @map("Urgent")
+}
+
+enum DocStatus {
+  REQUESTED @map("requested")
+  SUBMITTED @map("submitted")
+  APPROVED  @map("approved")
+  REJECTED  @map("rejected")
+  SHARED    @map("shared")
+  INFO      @map("info")
+}
+
+enum DocType {
+  IDENTITY  @map("Identity")
+  ADDRESS   @map("Address")
+  FORMATION @map("Formation")
+  TAX       @map("Tax")
+  AGREEMENT @map("Agreement")
+  OTHER     @map("Other")
+}
+
+enum FilingStatus {
+  NOT_SUBMITTED        @map("Not submitted")
+  SUBMITTED            @map("Submitted")
+  PENDING_STATE_REVIEW @map("Pending state review")
+  APPROVED             @map("Approved")
+  REJECTED             @map("Rejected")
+}
+
+enum TicketStatus {
+  OPEN                      @map("Open")
+  IN_PROGRESS               @map("In Progress")
+  WAITING_FOR_CLIENT        @map("Waiting for Client")
+  WAITING_FOR_INTERNAL_TEAM @map("Waiting for Internal Team")
+  RESOLVED                  @map("Resolved")
+  CLOSED                    @map("Closed")
+}
+
+enum TicketCategory {
+  FORMATION_DELAY       @map("Formation delay")
+  DOCUMENT_PROBLEM      @map("Document problem")
+  INCORRECT_INFORMATION @map("Incorrect client information")
+  COMMUNICATION_ISSUE   @map("Communication issue")
+  GENERAL_REQUEST       @map("General service request")
+  TECHNICAL_PROBLEM     @map("Technical problem")
+  COMPLAINT             @map("Complaint")
+}
+
+enum AnnouncementPriority {
+  NORMAL    @map("Normal")
+  IMPORTANT @map("Important")
+  URGENT    @map("Urgent")
+}
+
+enum AnnouncementStatus {
+  DRAFT     @map("Draft")
+  PUBLISHED @map("Published")
+  ARCHIVED  @map("Archived")
+}
+
+enum ReportStatus {
+  SUBMITTED               @map("Submitted")
+  ACKNOWLEDGED            @map("Acknowledged")
+  CLARIFICATION_REQUESTED @map("Clarification requested")
+  REVIEWED                @map("Reviewed")
+}
+
+enum ReportCategory {
+  MISSING_INFORMATION @map("Missing information")
+  DOCUMENT_QUESTION   @map("Document question")
+  CLIENT_CONCERN      @map("Client concern")
+  FILING_QUESTION     @map("Filing question")
+  TAX_EIN_QUESTION    @map("Tax / EIN question")
+  OTHER               @map("Other")
+}
+
+enum NoteVisibility {
+  STAFF      @map("staff")
+  COMPLIANCE @map("compliance")
+}
+
+enum TaskType {
+  COMPLIANCE    @map("Compliance")
+  CSR_FOLLOW_UP @map("CSR follow-up")
+  OPERATIONS    @map("Operations")
+}
+
+enum TaskVisibility {
+  INTERNAL @map("internal")
+  CLIENT   @map("client")
+}
+
+enum InteractionType {
+  CALL           @map("Call")
+  EMAIL          @map("Email")
+  PORTAL_MESSAGE @map("Portal message")
+  MEETING        @map("Meeting")
+}
+
+enum FollowUpStatus {
+  OPEN @map("Open")
+  DONE @map("Done")
+}
+
+enum ContactPreference {
+  PORTAL_MESSAGE @map("Portal message")
+  EMAIL          @map("Email")
+  PHONE          @map("Phone")
+}
+
+enum NotificationCategory {
+  MESSAGES
+  DOCUMENTS
+  STAGE
+  TICKETS
+  ANNOUNCEMENTS
+}
+
+// ---------------------------------------------------------------------------
+// Users and clients
+// ---------------------------------------------------------------------------
+
+model User {
+  id               String     @id @default(cuid())
+  /// Stored lower-case. Uniqueness among non-removed accounts is the partial index User_email_active_key (see migrations).
+  email            String     @db.VarChar(254)
+  name             String     @db.VarChar(120)
+  role             Role
+  status           UserStatus @default(INVITED)
+  /// Argon2id hash. Null until an invited person accepts and sets a password.
+  passwordHash     String?    @db.VarChar(255)
+  failedLoginCount Int        @default(0)
+  /// Brute-force protection: sign-in is refused until this time.
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  invitedById      String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  deletedAt        DateTime?
+
+  invitedBy               User?                    @relation("Invitations", fields: [invitedById], references: [id], onDelete: SetNull)
+  invitees                User[]                   @relation("Invitations")
+  clientProfile           ClientProfile?
+  assignedClients         ClientProfile[]          @relation("AssignedCsr")
+  notificationPreferences NotificationPreference[]
+  refreshTokens           RefreshToken[]
+  invitationTokens        InvitationToken[]
+  notifications           Notification[]
+  conversationReads       ConversationRead[]
+  clientCases             Case[]                   @relation("CaseClient")
+  ownedCases              Case[]                   @relation("CaseOwner")
+  caseEvents              CaseEvent[]
+  caseNotes               CaseNote[]
+  tasksCreated            Task[]                   @relation("TaskCreator")
+  tasksAssigned           Task[]                   @relation("TaskAssignee")
+  tasksCompleted          Task[]                   @relation("TaskCompleter")
+  documents               Document[]               @relation("DocumentClient")
+  documentsRequested      Document[]               @relation("DocumentRequester")
+  documentsReviewed       Document[]               @relation("DocumentReviewer")
+  documentEvents          DocumentEvent[]
+  messagesSent            Message[]                @relation("MessageSender")
+  messagesReceived        Message[]                @relation("MessageClient")
+  reportsAsClient         Report[]                 @relation("ReportClient")
+  reportsAsCsr            Report[]                 @relation("ReportCsr")
+  reportMessages          ReportMessage[]
+  reportEvents            ReportEvent[]
+  announcementsCreated    Announcement[]           @relation("AnnouncementAuthor")
+  announcementsTargeted   Announcement[]           @relation("AnnouncementAudience")
+  announcementAcks        AnnouncementAck[]
+  ticketsAsClient         Ticket[]                 @relation("TicketClient")
+  ticketsHandled          Ticket[]                 @relation("TicketHandler")
+  ticketsResolved         Ticket[]                 @relation("TicketResolver")
+  ticketMessages          TicketMessage[]
+  ticketEvents            TicketEvent[]
+  followUpsAsClient       FollowUp[]               @relation("FollowUpClient")
+  followUpsAsCsr          FollowUp[]               @relation("FollowUpCsr")
+  interactionsAsClient    Interaction[]            @relation("InteractionClient")
+  interactionsBy          Interaction[]            @relation("InteractionAuthor")
+  auditLogs               AuditLog[]
+
+  @@index([email])
+  @@index([role, status])
+  @@index([deletedAt])
+  @@index([createdAt])
+}
+
+/// Client-only details. One row per CLIENT user.
+model ClientProfile {
+  userId            String            @id
+  /// Human-readable client case ID, such as CASE-2026-0042.
+  caseNumber        String            @unique @db.VarChar(32)
+  csrId             String?
+  businessName      String            @default("") @db.VarChar(160)
+  formationState    String            @default("") @db.VarChar(40)
+  phone             String            @default("") @db.VarChar(32)
+  address           String            @default("") @db.VarChar(300)
+  contactPreference ContactPreference @default(PORTAL_MESSAGE)
+  preferredName     String            @default("") @db.VarChar(120)
+  joinedAt          DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  csr  User? @relation("AssignedCsr", fields: [csrId], references: [id], onDelete: SetNull)
+
+  @@index([csrId])
+}
+
+model NotificationPreference {
+  userId   String
+  category NotificationCategory
+  email    Boolean              @default(true)
+  inApp    Boolean              @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, category])
+}
+
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+/// Only a SHA-256 hash of the token is stored. A token belongs to a family; reuse of a rotated token
+/// revokes the whole family.
+model RefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  tokenHash    String    @unique @db.VarChar(64)
+  familyId     String    @db.VarChar(36)
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  userAgent    String?   @db.VarChar(300)
+  ipAddress    String?   @db.VarChar(64)
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+}
+
+model InvitationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique @db.VarChar(64)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Atomic counters for human-readable numbers (PRJ-118, TKT-1004, RPT-202, CASE-2026-0054).
+/// Incremented with a single UPDATE ... RETURNING so concurrent requests never share a number.
+model Counter {
+  key       String   @id @db.VarChar(40)
+  value     Int
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Company, services, cases
+// ---------------------------------------------------------------------------
+
+model Company {
+  id         Int      @id @default(1)
+  name       String   @db.VarChar(60)
+  logo       String   @default("") @db.Text
+  casePrefix String   @db.VarChar(8)
+  updatedAt  DateTime @updatedAt
+}
+
+model Service {
+  id           String      @id @db.VarChar(32)
+  name         String      @db.VarChar(120)
+  category     String      @db.VarChar(40)
+  description  String      @db.VarChar(500)
+  requirements String[]
+  stages       CaseStage[]
+  turnaround   String      @default("") @db.VarChar(80)
+  fee          String      @default("") @db.VarChar(80)
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  cases Case[]
+
+  @@index([active])
+  @@index([category])
+}
+
+/// A formation or service case (called a project in the first prototype).
+model Case {
+  id                 String     @id @default(cuid())
+  /// Sequence number shown as PRJ-<number>.
+  number             Int        @unique
+  clientId           String
+  serviceId          String
+  stage              CaseStage  @default(INVITATION_SENT)
+  status             CaseStatus @default(AWAITING_CLIENT)
+  priority           Priority   @default(NORMAL)
+  deadline           DateTime?  @db.Date
+  /// State confirmation number, required before a case moves past state approval.
+  filingConfirmation String     @default("") @db.VarChar(64)
+  ownerId            String?
+  completedAt        DateTime?
+  lastActivityAt     DateTime   @default(now())
+  /// Optimistic locking: updates must present the version they read.
+  version            Int        @default(1)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  deletedAt          DateTime?
+
+  client    User        @relation("CaseClient", fields: [clientId], references: [id], onDelete: Restrict)
+  owner     User?       @relation("CaseOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  service   Service     @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  events    CaseEvent[]
+  notes     CaseNote[]
+  tasks     Task[]
+  filings   Filing[]
+  reminders Reminder[]
+  reports   Report[]
+  tickets   Ticket[]
+
+  @@index([clientId])
+  @@index([serviceId])
+  @@index([ownerId])
+  @@index([stage])
+  @@index([status])
+  @@index([priority])
+  @@index([deadline])
+  @@index([lastActivityAt])
+  @@index([deletedAt])
+}
+
+model CaseEvent {
+  id      String     @id @default(cuid())
+  caseId  String
+  /// Stage the case moved to; null for a field edit.
+  toStage CaseStage?
+  byId    String
+  note    String     @default("") @db.VarChar(500)
+  at      DateTime   @default(now())
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  by   User @relation(fields: [byId], references: [id], onDelete: Restrict)
+
+  @@index([caseId, at])
+  @@index([byId])
+}
+
+model CaseNote {
+  id         String         @id @default(cuid())
+  caseId     String
+  authorId   String
+  visibility NoteVisibility @default(STAFF)
+  text       String         @db.VarChar(5000)
+  createdAt  DateTime       @default(now())
+
+  case   Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([caseId, createdAt])
+  @@index([authorId])
+}
+
+model Task {
+  id            String         @id @default(cuid())
+  caseId        String
+  title         String         @db.VarChar(200)
+  type          TaskType
+  visibility    TaskVisibility @default(INTERNAL)
+  done          Boolean        @default(false)
+  priority      Priority       @default(NORMAL)
+  due           DateTime       @db.Date
+  createdById   String
+  assigneeId    String
+  completedById String?
+  completedAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  case        Case  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  createdBy   User  @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assignee    User  @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  completedBy User? @relation("TaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+
+  @@index([caseId])
+  @@index([assigneeId, done])
+  @@index([createdById])
+  @@index([due])
+  @@index([done])
+  @@index([priority])
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+model Document {
+  id            String    @id @default(cuid())
+  clientId      String
+  name          String    @db.VarChar(200)
+  type          DocType   @default(OTHER)
+  status        DocStatus @default(REQUESTED)
+  /// Original file name. File bytes live in object storage under storageKey, never in the database.
+  fileName      String    @default("") @db.VarChar(255)
+  storageKey    String?   @db.VarChar(255)
+  mimeType      String?   @db.VarChar(100)
+  sizeBytes     Int?
+  /// Reason shown to the client when a document is rejected or needs more information.
+  reason        String    @default("") @db.VarChar(1000)
+  note          String    @default("") @db.VarChar(500)
+  requestedById String?
+  reviewedById  String?
+  requestedAt   DateTime  @default(now())
+  submittedAt   DateTime?
+  reviewedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  client      User            @relation("DocumentClient", fields: [clientId], references: [id], onDelete: Restrict)
+  requestedBy User?           @relation("DocumentRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  reviewedBy  User?           @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  history     DocumentEvent[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([type])
+  @@index([requestedById])
+  @@index([reviewedById])
+  @@index([submittedAt])
+  @@index([deletedAt])
+}
+
+model DocumentEvent {
+  id         String    @id @default(cuid())
+  documentId String
+  status     DocStatus
+  byId       String
+  note       String    @default("") @db.VarChar(1000)
+  at         DateTime  @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  by       User     @relation(fields: [byId], references: [id], onDelete: Restrict)
+
+  @@index([documentId, at])
+  @@index([byId])
+}
+
+// ---------------------------------------------------------------------------
+// Messages and CSR reports
+// ---------------------------------------------------------------------------
+
+/// One shared conversation per client; clientId is the conversation key.
+model Message {
+  id             String   @id @default(cuid())
+  clientId       String
+  senderId       String
+  text           String   @db.VarChar(5000)
+  attachmentName String?  @db.VarChar(255)
+  createdAt      DateTime @default(now())
+
+  client User @relation("MessageClient", fields: [clientId], references: [id], onDelete: Restrict)
+  sender User @relation("MessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+
+  @@index([clientId, createdAt])
+  @@index([senderId])
+}
+
+model ConversationRead {
+  userId   String
+  clientId String
+  /// Messages created at or before this moment count as read.
+  readUpTo DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, clientId])
+  @@index([clientId])
+}
+
+model Report {
+  id        String         @id @default(cuid())
+  /// Sequence number shown as RPT-<number>.
+  number    Int            @unique
+  clientId  String
+  csrId     String
+  caseId    String?
+  title     String         @db.VarChar(200)
+  body      String         @db.VarChar(5000)
+  category  ReportCategory @default(OTHER)
+  priority  Priority       @default(NORMAL)
+  action    String         @default("") @db.VarChar(500)
+  status    ReportStatus   @default(SUBMITTED)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  client   User            @relation("ReportClient", fields: [clientId], references: [id], onDelete: Restrict)
+  csr      User            @relation("ReportCsr", fields: [csrId], references: [id], onDelete: Restrict)
+  case     Case?           @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  messages ReportMessage[]
+  events   ReportEvent[]
+
+  @@index([clientId])
+  @@index([csrId])
+  @@index([caseId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+model ReportMessage {
+  id        String   @id @default(cuid())
+  reportId  String
+  authorId  String
+  text      String   @db.VarChar(5000)
+  /// True for Compliance-only notes that the CSR never sees.
+  isNote    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  author User   @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([reportId, createdAt])
+  @@index([authorId])
+}
+
+model ReportEvent {
+  id       String       @id @default(cuid())
+  reportId String
+  status   ReportStatus
+  byId     String
+  at       DateTime     @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  by     User   @relation(fields: [byId], references: [id], onDelete: Restrict)
+
+  @@index([reportId, at])
+  @@index([byId])
+}
+
+// ---------------------------------------------------------------------------
+// Announcements
+// ---------------------------------------------------------------------------
+
+model Announcement {
+  id          String               @id @default(cuid())
+  title       String               @db.VarChar(200)
+  message     String               @db.VarChar(5000)
+  /// Null means every client; otherwise the one client it is meant for.
+  audienceId  String?
+  priority    AnnouncementPriority @default(NORMAL)
+  status      AnnouncementStatus   @default(DRAFT)
+  requireAck  Boolean              @default(false)
+  createdById String
+  publishedAt DateTime?
+  expiresAt   DateTime?            @db.Date
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  createdBy User              @relation("AnnouncementAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+  audience  User?             @relation("AnnouncementAudience", fields: [audienceId], references: [id], onDelete: Cascade)
+  acks      AnnouncementAck[]
+
+  @@index([audienceId])
+  @@index([createdById])
+  @@index([status])
+  @@index([publishedAt])
+}
+
+model AnnouncementAck {
+  announcementId String
+  userId         String
+  at             DateTime @default(now())
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([announcementId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Tickets
+// ---------------------------------------------------------------------------
+
+model Ticket {
+  id             String         @id @default(cuid())
+  /// Sequence number shown as TKT-<number>.
+  number         Int            @unique
+  clientId       String
+  caseId         String?
+  title          String         @db.VarChar(200)
+  category       TicketCategory
+  priority       Priority       @default(NORMAL)
+  status         TicketStatus   @default(OPEN)
+  handlerId      String?
+  description    String         @db.VarChar(5000)
+  escalated      Boolean        @default(false)
+  resolutionNote String         @default("") @db.VarChar(1000)
+  resolvedById   String?
+  resolvedAt     DateTime?
+  /// Optimistic locking: updates must present the version they read.
+  version        Int            @default(1)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  client     User            @relation("TicketClient", fields: [clientId], references: [id], onDelete: Restrict)
+  handler    User?           @relation("TicketHandler", fields: [handlerId], references: [id], onDelete: SetNull)
+  resolvedBy User?           @relation("TicketResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  case       Case?           @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  messages   TicketMessage[]
+  events     TicketEvent[]
+
+  @@index([clientId])
+  @@index([handlerId])
+  @@index([caseId])
+  @@index([status])
+  @@index([priority])
+  @@index([escalated])
+  @@index([createdAt])
+}
+
+model TicketMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  authorId  String
+  text      String   @db.VarChar(5000)
+  /// Internal notes are hidden from the client.
+  internal  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User   @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+  @@index([authorId])
+}
+
+model TicketEvent {
+  id         String        @id @default(cuid())
+  ticketId   String
+  fromStatus TicketStatus?
+  toStatus   TicketStatus
+  byId       String
+  note       String        @default("") @db.VarChar(1000)
+  at         DateTime      @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  by     User   @relation(fields: [byId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, at])
+  @@index([byId])
+}
+
+// ---------------------------------------------------------------------------
+// Follow-ups, interactions, filings, reminders
+// ---------------------------------------------------------------------------
+
+model FollowUp {
+  id        String          @id @default(cuid())
+  clientId  String
+  csrId     String
+  type      InteractionType
+  due       DateTime        @db.Date
+  status    FollowUpStatus  @default(OPEN)
+  note      String          @db.VarChar(500)
+  outcome   String          @default("") @db.VarChar(2000)
+  doneAt    DateTime?
+  createdAt DateTime        @default(now())
+
+  client User @relation("FollowUpClient", fields: [clientId], references: [id], onDelete: Restrict)
+  csr    User @relation("FollowUpCsr", fields: [csrId], references: [id], onDelete: Restrict)
+
+  @@index([clientId])
+  @@index([csrId, status])
+  @@index([due])
+  @@index([status])
+}
+
+model Interaction {
+  id       String          @id @default(cuid())
+  clientId String
+  byId     String
+  kind     InteractionType
+  text     String          @db.VarChar(2000)
+  at       DateTime        @default(now())
+
+  client User @relation("InteractionClient", fields: [clientId], references: [id], onDelete: Restrict)
+  by     User @relation("InteractionAuthor", fields: [byId], references: [id], onDelete: Restrict)
+
+  @@index([clientId, at])
+  @@index([byId])
+}
+
+/// Manual filing tracker. Nothing here is read from or sent to a state system.
+model Filing {
+  id             String       @id @default(cuid())
+  /// Sequence number shown as FIL-<number>.
+  number         Int          @unique
+  caseId         String
+  type           String       @db.VarChar(120)
+  submittedOn    DateTime?    @db.Date
+  status         FilingStatus @default(NOT_SUBMITTED)
+  reference      String       @default("") @db.VarChar(64)
+  nextAction     String       @default("") @db.VarChar(200)
+  nextActionDate DateTime?    @db.Date
+  outcome        String       @default("") @db.VarChar(40)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@index([status])
+  @@index([nextActionDate])
+}
+
+model Reminder {
+  id           String   @id @default(cuid())
+  caseId       String
+  title        String   @db.VarChar(200)
+  date         DateTime @db.Date
+  kind         String   @db.VarChar(40)
+  /// Illustrative reminders are never presented as legal deadlines.
+  illustrative Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications, automation, audit
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  text      String    @db.VarChar(500)
+  /// The view the notification opens.
+  link      String    @default("") @db.VarChar(60)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+}
+
+model NotificationTrigger {
+  key             String   @id @db.VarChar(32)
+  name            String   @db.VarChar(80)
+  enabled         Boolean  @default(true)
+  template        String   @db.VarChar(80)
+  templateOptions String[]
+  /// Security events can't be switched off.
+  security        Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorRole Role?
+  action    String   @db.VarChar(500)
+  target    String   @default("") @db.VarChar(200)
+  ok        Boolean  @default(true)
+  category  String   @default("") @db.VarChar(32)
+  requestId String?  @db.VarChar(64)
+  ipAddress String?  @db.VarChar(64)
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([category])
+  @@index([ok])
+}
