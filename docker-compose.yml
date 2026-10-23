@@ -1,0 +1,71 @@
+# The whole stack: database, API and web app.
+#   Copy-Item .env.example .env      (then set the passwords and the JWT secret)
+#   docker compose up -d --build
+# Open http://localhost:3000. The browser only talks to the web app; it forwards /api/* to the API over the compose network,
+# so there is one origin, no CORS and the API's SameSite=Strict refresh cookie is first-party.
+# In production put an HTTPS reverse proxy in front (see GO-LIVE.md) and keep ports 4000 and 5432 closed to the internet.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-innovexify}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-innovexify}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovexify} -d ${POSTGRES_DB:-innovexify}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-innovexify}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-innovexify}?schema=public&connection_limit=${DB_CONNECTION_LIMIT:-10}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET in .env (at least 32 random characters)}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${APP_URL:-http://localhost:3000}
+      # The web app is the only caller and sits on the same host, so the API sees its address.
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      STORAGE_DIR: /app/storage
+      # true: the container applies pending migrations when it starts (fine for one instance). Set false and run the release step from GO-LIVE.md for more.
+      MIGRATE_ON_START: ${MIGRATE_ON_START:-true}
+      VIRUS_SCANNER: ${VIRUS_SCANNER:-none}
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+    volumes:
+      # Client documents. Back this volume up together with the database.
+      - uploads:/app/storage
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        API_ORIGIN: http://api:4000
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  pgdata:
+  uploads:
