@@ -1,25 +1,26 @@
 "use client";
 
-import { useMemo } from "react";
-
-import { isDone, roleLabelOf } from "@/components/features/client/client-shared";
-import type { WorkspaceNav } from "@/hooks/useWorkspaceNav";
+import { ErrorState } from "@/components/common/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Card, CardHeader, EmptyState } from "@/components/ui/primitives";
-import { CASE_TONE, DOC_STATUS, STAGES, TICKET_TONE } from "@/constants/vocab";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
-import { ago, dISO, fmtAt, fmtDay, relDay } from "@/lib/dates";
+import { CASE_TONE, DOC_STATUS, ROLE_LABEL, STAGES, TICKET_TONE } from "@/constants/vocab";
+import { useAction } from "@/hooks/useAction";
+import { useMe } from "@/hooks/useStore";
+import type { WorkspaceNav } from "@/hooks/useWorkspaceNav";
 import { cn } from "@/lib/cn";
-import { acknowledgeAnnouncement } from "@/store/actions/comms";
-import { projectOfClient, userName } from "@/store/selectors";
+import { ago, dISO, fmtAt, fmtDay, relDay } from "@/lib/dates";
+import { useAcknowledgeAnnouncementMutation, useAnnouncementsQuery } from "@/store/api/announcements";
+import { useHomeCaseQuery, useHomeDocumentsQuery, useHomeTasksQuery, usePortalCompanyQuery } from "@/store/api/home";
+import { useThreadPageQuery } from "@/store/api/messages";
+import { useClientQuery } from "@/store/api/people";
+import { useTicketsQuery } from "@/store/api/tickets";
 import type { Announcement } from "@/types/domain";
 
 interface Update {
   text: string;
   who: string;
-  role: string;
   at: number;
   time: string;
   kind: string;
@@ -70,22 +71,60 @@ function Stepper({ stageIdx, done }: { stageIdx: number; done: boolean }) {
   );
 }
 
+function AnnouncementCard({ a }: { a: Announcement }) {
+  const run = useAction();
+  const [acknowledge, { isLoading }] = useAcknowledgeAnnouncementMutation();
+  return (
+    <div className={cn("card flex flex-col gap-1 px-3.5 py-3", ANN_SURFACE[a.prio])}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={ANN_TONE[a.prio]}>{a.prio}</Badge>
+        <span className="font-semibold">{a.title}</span>
+        <span className="help">· from {a.byName}</span>
+      </div>
+      <span className="text-sm">{a.msg}</span>
+      {a.ack && !a.acked ? (
+        <Button size="sm" variant="primary" className="self-start" disabled={isLoading} onClick={() => void run(acknowledge(a.id), { success: "Acknowledged. Thank you." })}>
+          {isLoading ? "Saving…" : "Acknowledge"}
+        </Button>
+      ) : null}
+      {a.ack && a.acked ? <span className="text-sm font-medium text-success">Acknowledged</span> : null}
+    </div>
+  );
+}
+
 /** The Home page: welcome, announcements, formation progress and everything waiting on the client. */
 export function HomeMain({ nav }: { nav: WorkspaceNav }) {
-  const dispatch = useAppDispatch();
-  const data = useData();
   const me = useMe();
-  const project = projectOfClient(data, me.id);
-  const csr = userName(data, me.csr);
+  const profile = useClientQuery(me.id);
+  const company = usePortalCompanyQuery();
+  const caseQuery = useHomeCaseQuery();
+  const docsQuery = useHomeDocumentsQuery();
+  const tasksQuery = useHomeTasksQuery();
+  const annsQuery = useAnnouncementsQuery({ limit: 20 }, { pollingInterval: 60_000, skipPollingIfUnfocused: true, refetchOnMountOrArgChange: 5 });
+  const ticketsQuery = useTicketsQuery({ group: "active", limit: 50 });
+  const resolvedQuery = useTicketsQuery({ status: "RESOLVED", limit: 50 });
+  const thread = useThreadPageQuery({ clientId: me.id, limit: 30 });
 
-  const myDocs = useMemo(() => data.docs.filter((d) => d.client === me.id), [data.docs, me.id]);
-  const myTickets = useMemo(() => data.tickets.filter((t) => t.client === me.id), [data.tickets, me.id]);
+  const project = caseQuery.data ?? null;
+  const biz = profile.data?.biz ?? "";
+  const state = profile.data?.state ?? "";
+  const csr = profile.data?.csrName ?? "Unassigned";
+  const companyName = company.data?.name ?? "";
+  const myDocs = docsQuery.data ?? [];
+  const clientTasks = tasksQuery.data ?? [];
+  const activeTickets = ticketsQuery.data?.items ?? [];
+  const resolvedCount = resolvedQuery.data?.meta.total ?? 0;
   const today = dISO(0);
-  const anns = data.anns.filter(
-    (a) => a.status === "Published" && (a.aud === "all" || a.aud === me.id) && (!a.exp || a.exp >= today),
-  );
+  const anns = (annsQuery.data?.items ?? []).filter((a) => !a.exp || a.exp >= today);
   const pending = myDocs.filter((d) => d.status === "requested" || d.status === "rejected" || d.status === "info");
-  const clientTasks = project ? data.tasks.filter((t) => t.project === project.id && t.vis === "client" && !t.done) : [];
+
+  const failed = [caseQuery, docsQuery, annsQuery, ticketsQuery].find((q) => q.isError);
+  const retryAll = () => {
+    void caseQuery.refetch();
+    void docsQuery.refetch();
+    void annsQuery.refetch();
+    void ticketsQuery.refetch();
+  };
 
   const actions = [
     ...myDocs
@@ -95,66 +134,55 @@ export function HomeMain({ nav }: { nav: WorkspaceNav }) {
         text: `${d.status === "rejected" ? "Replace" : "Upload"}: ${d.name}${d.reason ? ` (${d.reason})` : ""}`,
         cta: "Upload",
         primary: true,
-        go: () => nav.go("cdocs", { query: { doc: String(d.id) } }),
+        go: () => nav.go("cdocs", { query: { doc: d.id } }),
       })),
-    ...clientTasks.map((t) => ({
-      key: `task-${t.id}`,
-      text: t.title,
-      cta: "Message team",
-      primary: false,
-      go: () => nav.go("cmsgs"),
-    })),
+    ...clientTasks.map((t) => ({ key: `task-${t.id}`, text: t.title, cta: "Message team", primary: false, go: () => nav.go("cmsgs") })),
   ];
 
   const deadlines = [
-    ...(project?.deadline && !isDone(project)
+    ...(project?.deadline && project.stageIdx < 10 && project.status !== "Completed"
       ? [{ key: "target", date: project.deadline, title: "Target date for your formation", note: "Set by your team; the state's processing time may change it." }]
       : []),
-    ...clientTasks
-      .filter((t) => t.due)
-      .map((t) => ({ key: `t-${t.id}`, date: t.due, title: t.title, note: "Shared by your team" })),
+    ...clientTasks.filter((t) => t.due).map((t) => ({ key: `t-${t.id}`, date: t.due, title: t.title, note: "Shared by your team" })),
   ].sort((a, b) => (a.date < b.date ? -1 : 1));
 
   const updates: Update[] = [];
-  (data.msgs[me.id] ?? []).forEach((m) => {
-    const sender = data.users.find((u) => u.id === m.from);
-    if (sender && sender.role !== "CLIENT") {
-      updates.push({ text: m.text, who: sender.name, role: roleLabelOf(data, sender.id), at: m.at ?? 0, time: m.time, kind: "Message" });
-    }
+  (thread.data?.items ?? []).forEach((m) => {
+    if (m.fromRole !== "CLIENT") updates.push({ text: m.text, who: `${m.fromName} · ${ROLE_LABEL[m.fromRole]}`, at: m.at, time: m.time, kind: "Message" });
   });
   (project?.events ?? []).forEach((e) => {
-    if (e.to) {
-      updates.push({ text: `Your case moved to ${e.to}`, who: userName(data, e.by), role: roleLabelOf(data, e.by), at: e.at, time: fmtAt(e.at), kind: "Progress" });
-    }
+    updates.push({ text: `Your case moved to ${e.stage}`, who: "Your team", at: e.at, time: fmtAt(e.at), kind: "Progress" });
   });
-  myDocs.forEach((d) =>
-    d.history
-      .filter((h) => h.status === "approved" || h.status === "rejected" || h.status === "info" || h.status === "shared")
-      .forEach((h) =>
-        updates.push({ text: `${d.name}: ${DOC_STATUS[h.status].label}`, who: userName(data, h.by), role: roleLabelOf(data, h.by), at: h.at, time: fmtAt(h.at), kind: "Document" }),
-      ),
-  );
+  myDocs
+    .filter((d) => d.status === "approved" || d.status === "rejected" || d.status === "info" || d.status === "shared")
+    .forEach((d) => {
+      const at = d.reviewedAt ?? d.requestedAt ?? 0;
+      updates.push({ text: `${d.name}: ${DOC_STATUS[d.status].label}`, who: "Your team", at, time: fmtAt(at), kind: "Document" });
+    });
   const recent = updates.sort((a, b) => b.at - a.at).slice(0, 5);
 
-  const open = myTickets.filter((t) => t.status !== "Resolved" && t.status !== "Closed").length;
-  const resolved = myTickets.filter((t) => t.status === "Resolved").length;
-  const ticketSummary = myTickets.length ? `${open} open · ${resolved} awaiting your confirmation` : "No tickets yet";
-  const firstTickets = myTickets.filter((t) => t.status !== "Resolved" && t.status !== "Closed").slice(0, 3);
+  const ticketSummary =
+    activeTickets.length || resolvedCount ? `${activeTickets.length} open · ${resolvedCount} awaiting your confirmation` : "No tickets yet";
+  const firstTickets = activeTickets.slice(0, 3);
 
   const openCenter = () => nav.go("home", { query: { view: "tickets" } });
   const newTicket = () => nav.go("home", { query: { view: "tickets", form: "1" } });
   const pct = project ? Math.round(((project.stageIdx >= 10 ? 11 : project.stageIdx) / 11) * 100) : 0;
-  const done = project ? isDone(project) : false;
+  const done = project ? project.stageIdx >= 10 || project.status === "Completed" : false;
 
   return (
     <div className="stack-16">
       <section className="card flex flex-wrap items-center gap-3.5 p-[18px]">
         <div className="min-w-[280px] flex-1">
           <h1 className="h1">Welcome, {me.name.split(" ")[0]}</h1>
-          <p className="help">Your {data.company.name} formation case at a glance.</p>
+          <p className="help">Your {companyName} formation case at a glance.</p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             <span className="mono rounded-md border border-border bg-background px-2.5 py-[5px] text-sm">Case ID {me.caseId}</span>
-            {me.csr ? <Badge tone="q" className="h-7">Your CSR: {csr}</Badge> : null}
+            {profile.data?.csr ? (
+              <Badge tone="q" className="h-7">
+                Your CSR: {csr}
+              </Badge>
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -169,33 +197,24 @@ export function HomeMain({ nav }: { nav: WorkspaceNav }) {
         </div>
       </section>
 
-      {anns.map((a) => {
-        const acked = a.ack && Boolean(a.acks[me.id]);
-        return (
-          <div key={a.id} className={cn("card flex flex-col gap-1 px-3.5 py-3", ANN_SURFACE[a.prio])}>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={ANN_TONE[a.prio]}>{a.prio}</Badge>
-              <span className="font-semibold">{a.title}</span>
-              <span className="help">· from {userName(data, a.by)}</span>
-            </div>
-            <span className="text-sm">{a.msg}</span>
-            {a.ack && !acked ? (
-              <Button size="sm" variant="primary" className="self-start" onClick={() => dispatch(acknowledgeAnnouncement(a.id))}>
-                Acknowledge
-              </Button>
-            ) : null}
-            {acked ? <span className="text-sm font-medium text-success">Acknowledged</span> : null}
-          </div>
-        );
-      })}
+      {failed ? <ErrorState error={failed.error} onRetry={retryAll} title="Some of your information could not be loaded" /> : null}
+
+      {anns.map((a) => (
+        <AnnouncementCard key={a.id} a={a} />
+      ))}
 
       <Card>
-        {project ? (
+        {caseQuery.isLoading ? (
+          <div className="card-b" aria-busy="true">
+            <div className="skel h-6 w-1/3" />
+            <div className="skel h-10" />
+          </div>
+        ) : project ? (
           <>
             <div className="card-h">
-              <span className="h3">{me.biz || "Your LLC"}</span>
+              <span className="h3">{biz || "Your LLC"}</span>
               <span className="help">
-                {me.state || ""} · {project.id}
+                {state || ""} · {project.display}
               </span>
               <Badge tone={CASE_TONE[project.status] ?? "q"} className="ml-auto">
                 {project.status}
@@ -231,7 +250,7 @@ export function HomeMain({ nav }: { nav: WorkspaceNav }) {
               </Button>
             </div>
           ))}
-          {actions.length === 0 ? <EmptyState title="You're all caught up" text="Nothing is needed from you right now." /> : null}
+          {actions.length === 0 && !docsQuery.isLoading ? <EmptyState title="You're all caught up" text="Nothing is needed from you right now." /> : null}
         </Card>
 
         <Card>
@@ -239,12 +258,7 @@ export function HomeMain({ nav }: { nav: WorkspaceNav }) {
           {pending.map((d) => {
             const note = d.reason || d.note || "";
             return (
-              <button
-                key={d.id}
-                type="button"
-                className="row w-full cursor-pointer flex-nowrap text-left hover:bg-background"
-                onClick={() => nav.go("cdocs", { query: { doc: String(d.id) } })}
-              >
+              <button key={d.id} type="button" className="row w-full cursor-pointer flex-nowrap text-left hover:bg-background" onClick={() => nav.go("cdocs", { query: { doc: d.id } })}>
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="text-sm font-medium">{d.name}</span>
                   <span className="help">{d.requestedAt ? `Requested ${ago(d.requestedAt)}` : ""}</span>
@@ -254,7 +268,7 @@ export function HomeMain({ nav }: { nav: WorkspaceNav }) {
               </button>
             );
           })}
-          {pending.length === 0 ? <EmptyState title="No open requests" text="When your team needs a document it appears here." /> : null}
+          {pending.length === 0 && !docsQuery.isLoading ? <EmptyState title="No open requests" text="When your team needs a document it appears here." /> : null}
         </Card>
 
         <Card>
@@ -269,7 +283,7 @@ export function HomeMain({ nav }: { nav: WorkspaceNav }) {
               <Badge tone="q">{relDay(d.date)}</Badge>
             </div>
           ))}
-          {deadlines.length === 0 ? <EmptyState title="No dates scheduled" /> : null}
+          {deadlines.length === 0 && !caseQuery.isLoading ? <EmptyState title="No dates scheduled" /> : null}
         </Card>
 
         <Card>
@@ -279,14 +293,14 @@ export function HomeMain({ nav }: { nav: WorkspaceNav }) {
             </Button>
           </CardHeader>
           <div className="row">
-            <span className="mini flex-1">{ticketSummary}</span>
+            <span className="mini flex-1">{ticketsQuery.isLoading ? "Loading…" : ticketSummary}</span>
             <Button size="sm" onClick={openCenter}>
               Open ticket center
             </Button>
           </div>
           {firstTickets.map((t) => (
             <div key={t.id} className="row">
-              <span className="mono help">{t.id}</span>
+              <span className="mono help">{t.display}</span>
               <span className="min-w-[140px] flex-1 text-sm font-medium">{t.title}</span>
               <Badge tone={TICKET_TONE[t.status]}>{t.status}</Badge>
               <Button size="sm" onClick={() => nav.go("home", { query: { view: "tickets", ticket: t.id } })}>
@@ -308,11 +322,11 @@ export function HomeMain({ nav }: { nav: WorkspaceNav }) {
             <Badge tone="q">{m.kind}</Badge>
             <span className="min-w-[220px] flex-1 text-sm">{m.text}</span>
             <span className="help">
-              {m.who} · {m.role} · {m.time}
+              {m.who} · {m.time}
             </span>
           </div>
         ))}
-        {recent.length === 0 ? <EmptyState title="No updates yet" text="Messages, progress and document decisions from your team appear here." /> : null}
+        {recent.length === 0 && !thread.isLoading ? <EmptyState title="No updates yet" text="Messages, progress and document decisions from your team appear here." /> : null}
       </Card>
     </div>
   );

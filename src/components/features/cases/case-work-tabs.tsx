@@ -2,17 +2,17 @@
 
 import { useState } from "react";
 
-import type { WorkspaceNav } from "@/hooks/useWorkspaceNav";
+import { QueryState } from "@/components/common/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input, Select, Textarea, Field } from "@/components/ui/form";
+import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import { Callout, Card, EmptyState } from "@/components/ui/primitives";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
-import { dISO, fmtAt, fmtDay } from "@/lib/dates";
+import { useAction } from "@/hooks/useAction";
+import { useMe } from "@/hooks/useStore";
+import type { WorkspaceNav } from "@/hooks/useWorkspaceNav";
+import { fmtAt, fmtDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
-import { ROLE_LABEL } from "@/constants/vocab";
-import { addCaseNote, addProjectTask, findDuplicateDocument, toggleTask } from "@/store/actions/cases";
-import { userById, userName } from "@/store/selectors";
+import { useAddCaseNoteMutation, useCompleteTaskMutation, useCreateTaskMutation, useReopenTaskMutation, useTasksQuery } from "@/store/api/cases";
 import type { NoteVisibility, Project, TaskType, User, Visibility } from "@/types/domain";
 
 interface TabProps {
@@ -20,67 +20,73 @@ interface TabProps {
   client: User;
 }
 
+const todayUtc = (): string => new Date().toISOString().slice(0, 10);
+
 export function TasksTab({ project, client, nav }: TabProps & { nav: WorkspaceNav }) {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
+  const run = useAction();
+  const result = useTasksQuery({ caseId: project.apiId, limit: 100, sort: "due", order: "asc" });
+  const [complete] = useCompleteTaskMutation();
+  const [reopen] = useReopenTaskMutation();
+  const [create, { isLoading }] = useCreateTaskMutation();
   const [title, setTitle] = useState("");
   const [vis, setVis] = useState<Visibility>("internal");
   const [error, setError] = useState("");
 
-  const today = dISO(0);
-  const tasks = data.tasks.filter((t) => t.project === project.id);
+  const today = todayUtc();
+  const tasks = result.data?.items ?? [];
   const staffManager = me.role === "ADMIN" || me.role === "MANAGER";
-  const canTask = me.role === "CSR" ? can(me, "followUpTask", client) : can(me, "complianceTask", client) || can(me, "manageProjects");
+  const canTask = me.role === "CSR" ? can(me, "followUpTask", { csr: client.csr }) : can(me, "complianceTask", client) || can(me, "manageProjects");
   const taskType: TaskType = me.role === "CSR" ? "CSR follow-up" : me.role === "COMPLIANCE" ? "Compliance" : "Operations";
-  const duplicate = title.trim() ? findDuplicateDocument(data, client.id, title) : null;
 
-  const add = () => {
-    const result = dispatch(addProjectTask(project.id, title, taskType, vis));
-    if (result.ok) {
-      setTitle("");
-      setError("");
-    } else setError(result.error ?? "Could not add the task.");
+  const add = async () => {
+    setError("");
+    const outcome = await run(create({ caseId: project.apiId, title: title.trim(), visibility: vis === "client" ? "CLIENT" : "INTERNAL", ...(staffManager ? { due: tomorrow() } : {}) }), {
+      success: "Task added",
+      quiet: true,
+    });
+    if (outcome.ok) setTitle("");
+    else if (outcome.error.errorCode !== "PERMISSION_DENIED") setError(outcome.error.fieldErrors[0]?.message ?? outcome.error.message);
   };
 
   return (
     <Card>
-      {tasks.map((t) => {
-        const overdue = !t.done && Boolean(t.due) && t.due < today;
-        return (
-          <div key={t.id} className="row first:border-t-0">
-            <input
-              type="checkbox"
-              checked={t.done}
-              onChange={() => dispatch(toggleTask(t.id))}
-              aria-label={`Mark ${t.title} done`}
-              className="size-[18px] accent-primary"
-            />
-            <div className="min-w-0 flex-[1_1_220px]">
-              <div className={`font-medium ${t.done ? "text-muted-foreground line-through" : ""}`}>{t.title}</div>
-              <div className="help">
-                {t.assignee ? userName(data, t.assignee) : "Unassigned"} ·{" "}
-                <span className={overdue ? "font-semibold text-danger-hover" : ""}>Due {t.due ? fmtDay(t.due) : "No due date"}</span>
+      <QueryState query={result} isEmpty={tasks.length === 0} empty={{ title: "No tasks on this case" }} rows={3}>
+        {tasks.map((t) => {
+          const overdue = !t.done && Boolean(t.due) && t.due < today;
+          return (
+            <div key={t.id} className="row first:border-t-0">
+              <input
+                type="checkbox"
+                checked={t.done}
+                onChange={() => void run(t.done ? reopen(t.id) : complete(t.id))}
+                aria-label={`Mark ${t.title} ${t.done ? "open again" : "done"}`}
+                className="size-[18px] accent-primary"
+              />
+              <div className="min-w-0 flex-[1_1_220px]">
+                <div className={`font-medium ${t.done ? "text-muted-foreground line-through" : ""}`}>{t.title}</div>
+                <div className="help">
+                  {t.assigneeName} · <span className={overdue ? "font-semibold text-danger-hover" : ""}>Due {t.due ? fmtDay(t.due) : "No due date"}</span>
+                </div>
               </div>
+              <Badge tone="q">{t.type}</Badge>
+              <Badge tone={t.vis === "client" ? "brand" : "q"}>{t.vis === "client" ? "Visible to client" : "Internal"}</Badge>
+              {staffManager ? (
+                <Button size="sm" onClick={() => nav.go("tasks", { query: { task: t.id } })}>
+                  Details
+                </Button>
+              ) : null}
             </div>
-            <Badge tone="q">{t.type}</Badge>
-            <Badge tone={t.vis === "client" ? "brand" : "q"}>{t.vis === "client" ? "Visible to client" : "Internal"}</Badge>
-            {staffManager ? (
-              <Button size="sm" onClick={() => nav.go("tasks", { query: { task: String(t.id) } })}>
-                Details
-              </Button>
-            ) : null}
-          </div>
-        );
-      })}
-      {tasks.length === 0 ? <EmptyState title="No tasks on this case" /> : null}
+          );
+        })}
+      </QueryState>
       {canTask ? (
         <>
           <form
             className="row bg-surface-muted"
             onSubmit={(e) => {
               e.preventDefault();
-              add();
+              void add();
             }}
           >
             <Input
@@ -97,21 +103,16 @@ export function TasksTab({ project, client, nav }: TabProps & { nav: WorkspaceNa
               <option value="internal">Internal only</option>
               <option value="client">Visible to client</option>
             </Select>
-            <Button type="submit" size="sm" variant="primary" disabled={!title.trim()}>
-              Add task
+            <Button type="submit" size="sm" variant="primary" disabled={!title.trim() || isLoading}>
+              {isLoading ? "Adding…" : "Add task"}
             </Button>
           </form>
-          {duplicate ? (
+          {error ? (
             <div className="px-3.5 pb-2">
-              <Callout tone="warn" icon="alert">
-                “{duplicate.name}” is already an open document request for this client. Adding this task will be blocked.
+              <Callout tone="warn" icon="alert" role="alert">
+                {error}
               </Callout>
             </div>
-          ) : null}
-          {error ? (
-            <p role="alert" className="errtxt px-3.5 pb-2">
-              {error}
-            </p>
           ) : null}
           <p className="help px-3.5 pb-3">Tasks that only repeat an open document request are blocked; follow up on the request instead.</p>
         </>
@@ -120,24 +121,31 @@ export function TasksTab({ project, client, nav }: TabProps & { nav: WorkspaceNa
   );
 }
 
+/** Admin and Manager must choose a due date; a day from now is the quick default for a task typed here. */
+function tomorrow(): string {
+  return new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+}
+
 export function NotesTab({ project, client }: TabProps) {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
+  const run = useAction();
+  const [addNote, { isLoading }] = useAddCaseNoteMutation();
   const [draft, setDraft] = useState("");
   const [vis, setVis] = useState<NoteVisibility>("staff");
   const [error, setError] = useState("");
 
   const canCompliance = can(me, "caseNotesCompliance");
-  const notes = project.notes.filter((n) => n.vis === "staff" || canCompliance).slice().reverse();
-  const hidden = project.notes.length - notes.length;
+  // The server only sends the notes this role may read.
+  const notes = project.notes.slice().reverse();
 
-  const add = () => {
-    const result = dispatch(addCaseNote(project.id, draft, canCompliance ? vis : "staff"));
-    if (result.ok) {
-      setDraft("");
-      setError("");
-    } else setError(result.error ?? "Could not add the note.");
+  const add = async () => {
+    setError("");
+    const outcome = await run(addNote({ id: project.apiId, text: draft.trim(), visibility: canCompliance && vis === "compliance" ? "COMPLIANCE" : "STAFF" }), {
+      success: "Note added",
+      quiet: true,
+    });
+    if (outcome.ok) setDraft("");
+    else if (outcome.error.errorCode !== "PERMISSION_DENIED") setError(outcome.error.fieldErrors[0]?.message ?? outcome.error.message);
   };
 
   return (
@@ -147,25 +155,24 @@ export function NotesTab({ project, client }: TabProps) {
           Internal notes are never shown to the client.
         </Callout>
       </div>
-      {hidden > 0 ? <p className="help px-3.5 pt-2">{hidden} Compliance-only note(s) are hidden from your role.</p> : null}
       {notes.map((n) => (
         <div key={n.id} className="row items-start">
           <div className="min-w-0 flex-1">
             <div className="whitespace-pre-wrap text-sm">{n.text}</div>
             <div className="help">
-              {userName(data, n.by)} · {userById(data, n.by) ? ROLE_LABEL[userById(data, n.by)?.role ?? "CSR"] : ""} · {fmtAt(n.at)}
+              {n.byName} · {fmtAt(n.at)}
             </div>
           </div>
           <Badge tone={n.vis === "compliance" ? "violet" : "q"}>{n.vis === "compliance" ? "Compliance & management" : "All staff on the case"}</Badge>
         </div>
       ))}
       {notes.length === 0 ? <EmptyState title="No notes yet" /> : null}
-      {can(me, "caseNotes", client) ? (
+      {can(me, "caseNotes", { csr: client.csr }) ? (
         <form
           className="card-b border-t border-muted"
           onSubmit={(e) => {
             e.preventDefault();
-            add();
+            void add();
           }}
         >
           <Field label="New internal note" error={error}>
@@ -189,8 +196,8 @@ export function NotesTab({ project, client }: TabProps) {
               </Select>
             ) : null}
             <span className="flex-1" />
-            <Button type="submit" size="sm" variant="primary" disabled={!draft.trim()}>
-              Add note
+            <Button type="submit" size="sm" variant="primary" disabled={!draft.trim() || isLoading}>
+              {isLoading ? "Adding…" : "Add note"}
             </Button>
           </div>
         </form>

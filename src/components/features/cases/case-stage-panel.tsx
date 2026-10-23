@@ -3,14 +3,17 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Field, Input, Select } from "@/components/ui/form";
+import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import { Callout, Card, CardHeader } from "@/components/ui/primitives";
 import { COMP_STAGES, STAGES } from "@/constants/vocab";
-import { useAppDispatch, useMe } from "@/hooks/useStore";
+import { useAction } from "@/hooks/useAction";
+import { useMe } from "@/hooks/useStore";
 import { msDay } from "@/lib/dates";
-import { moveStage, needsFilingNumber } from "@/store/actions/cases";
+import { CASE_STAGE } from "@/lib/api-mappers";
+import { useMoveStageMutation } from "@/store/api/cases";
 import type { Project } from "@/types/domain";
 import { isDone } from "./case-data";
+import { isRollback, needsFilingNumber } from "./case-rules";
 
 const LOCK_NOTE = {
   CSR: "CSRs can follow progress but can't move formation stages.",
@@ -24,9 +27,11 @@ const STEP_BASE =
 /** Milestone stepper plus the stage move control for roles that may move stages. */
 export function CaseStagePanel({ project }: { project: Project }) {
   const me = useMe();
-  const dispatch = useAppDispatch();
+  const run = useAction();
+  const [move, { isLoading }] = useMoveStageMutation();
   const [draft, setDraft] = useState("");
   const [filingNo, setFilingNo] = useState("");
+  const [reason, setReason] = useState("");
   const [error, setError] = useState("");
 
   const stage = STAGES[project.stageIdx];
@@ -36,17 +41,31 @@ export function CaseStagePanel({ project }: { project: Project }) {
   const options = base.includes(stage) ? base : [stage, ...base];
   const target = draft || stage;
   const needFiling = needsFilingNumber(project, target);
-  const blocked = target === stage || (needFiling && !filingNo.trim());
+  const rollback = isRollback(project, target);
+  const blocked = target === stage || (needFiling && !filingNo.trim()) || (rollback && !reason.trim());
   const next = project.stageIdx < 10 ? STAGES[project.stageIdx + 1] : "Formation complete";
   const lockNote = me.role === "CSR" ? LOCK_NOTE.CSR : me.role === "COMPLIANCE" ? LOCK_NOTE.COMPLIANCE : "";
 
-  const confirm = () => {
-    const result = dispatch(moveStage(project.id, target, filingNo));
-    if (result.ok) {
+  const confirm = async () => {
+    setError("");
+    // The version is the one on the page right now; a stale one comes back as "this changed while you were editing".
+    const outcome = await run(
+      move({
+        id: project.apiId,
+        targetStage: CASE_STAGE.toKey(target),
+        version: project.version,
+        ...(needFiling ? { filingConfirmation: filingNo.trim() } : {}),
+        ...(rollback ? { note: reason.trim() } : {}),
+      }),
+      { success: `Moved to ${target}`, quiet: true },
+    );
+    if (outcome.ok) {
       setDraft("");
       setFilingNo("");
-      setError("");
-    } else setError(result.error ?? "Could not move the stage.");
+      setReason("");
+    } else if (outcome.error.errorCode !== "PERMISSION_DENIED" && outcome.error.errorCode !== "CONCURRENT_MODIFICATION") {
+      setError(outcome.error.message);
+    }
   };
 
   return (
@@ -110,10 +129,15 @@ export function CaseStagePanel({ project }: { project: Project }) {
                   )}
                 </Field>
               ) : null}
-              <Button variant="primary" disabled={blocked} onClick={confirm}>
-                Confirm stage change
+              <Button variant="primary" disabled={blocked || isLoading} onClick={() => void confirm()}>
+                {isLoading ? "Moving…" : "Confirm stage change"}
               </Button>
             </div>
+            {rollback ? (
+              <Field label="Reason for moving the case back" help="Required. It is recorded on the timeline as “Rolled back”. Only Admin and Manager can move a case back.">
+                {(id) => <Textarea id={id} value={reason} onChange={(e) => setReason(e.target.value)} />}
+              </Field>
+            ) : null}
             {error ? (
               <span role="alert" className="errtxt">
                 {error}

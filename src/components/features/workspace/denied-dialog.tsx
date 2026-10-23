@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Modal, ModalFooter } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { useAppDispatch, useAppSelector } from "@/hooks/useStore";
-import { workspaceActions } from "@/store/workspaceSlice";
+import { uiActions } from "@/store/uiSlice";
 
 /** Explains why an action was refused. Every refusal is also written to the audit log. */
 export function DeniedDialog() {
-  const denied = useAppSelector((s) => s.workspace.denied);
+  const denied = useAppSelector((s) => s.ui.denied);
   const dispatch = useAppDispatch();
   const close = (): void => {
-    dispatch(workspaceActions.deniedSet(null));
+    dispatch(uiActions.deniedSet(null));
   };
   return (
     <Modal

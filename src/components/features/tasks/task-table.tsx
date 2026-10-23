@@ -1,24 +1,24 @@
 "use client";
 
-import { isOverdue, taskStatus } from "@/components/features/tasks/task-helpers";
+import { taskStatus } from "@/components/features/tasks/task-helpers";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/cn";
 import { PRIORITY_TONE } from "@/constants/vocab";
-import { useAppDispatch, useData } from "@/hooks/useStore";
+import { useAction } from "@/hooks/useAction";
+import { cn } from "@/lib/cn";
 import { ago, fmtDay, relDay } from "@/lib/dates";
-import { toggleTask } from "@/store/actions/cases";
-import { userName } from "@/store/selectors";
+import { useCompleteTaskMutation, useReopenTaskMutation } from "@/store/api/cases";
 import type { Task } from "@/types/domain";
 
 interface TaskTableProps {
   tasks: Task[];
-  activeId: number | null;
-  onOpen: (id: number) => void;
+  activeId: string | null;
+  onOpen: (id: string) => void;
 }
 
 export function TaskTable({ tasks, activeId, onOpen }: TaskTableProps) {
-  const data = useData();
-  const dispatch = useAppDispatch();
+  const run = useAction();
+  const [complete] = useCompleteTaskMutation();
+  const [reopen] = useReopenTaskMutation();
 
   return (
     <div className="tbl-wrap">
@@ -38,18 +38,15 @@ export function TaskTable({ tasks, activeId, onOpen }: TaskTableProps) {
         </thead>
         <tbody>
           {tasks.map((t) => {
-            const project = data.projects.find((p) => p.id === t.project);
-            const client = data.users.find((u) => u.id === project?.client);
             const status = taskStatus(t);
-            const late = isOverdue(t);
             return (
               <tr key={t.id} className={cn(activeId === t.id && "is-active")}>
                 <td className="tl-left">
                   <input
                     type="checkbox"
                     checked={t.done}
-                    onChange={() => dispatch(toggleTask(t.id))}
-                    aria-label={`Mark ${t.title} done`}
+                    onChange={() => void run(t.done ? reopen(t.id) : complete(t.id))}
+                    aria-label={`Mark ${t.title} ${t.done ? "open again" : "done"}`}
                     className="size-[18px] accent-primary"
                   />
                 </td>
@@ -59,16 +56,16 @@ export function TaskTable({ tasks, activeId, onOpen }: TaskTableProps) {
                   </button>
                 </td>
                 <td data-label="Case">
-                  <span className="mono text-xs">{client?.caseId}</span>
-                  <div className="help">{client?.name}</div>
+                  <span className="mono text-xs">{t.project}</span>
+                  <div className="help">{t.clientName}</div>
                 </td>
                 <td data-label="Assignee" className="whitespace-nowrap">
-                  {t.assignee ? userName(data, t.assignee) : "Unassigned"}
+                  {t.assigneeName}
                 </td>
                 <td data-label="Priority">
                   <Badge tone={PRIORITY_TONE[t.priority] ?? "q"}>{t.priority || "Normal"}</Badge>
                 </td>
-                <td data-label="Due" className={cn("whitespace-nowrap text-sm", late && "font-semibold text-danger-hover")}>
+                <td data-label="Due" className={cn("whitespace-nowrap text-sm", t.overdue && "font-semibold text-danger-hover")}>
                   {t.due ? fmtDay(t.due) : "—"}
                   <div className="help font-normal">{t.done ? `Completed ${t.completedAt ? ago(t.completedAt) : ""}` : t.due ? relDay(t.due) : ""}</div>
                 </td>

@@ -7,9 +7,10 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Field, FieldRow, Input, Select, Textarea } from "@/components/ui/form";
 import { PRIORITIES, REPORT_CATEGORIES } from "@/constants/vocab";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
-import { submitReport } from "@/store/actions/comms";
-import type { Priority } from "@/types/domain";
+import { useAction } from "@/hooks/useAction";
+import { PRIORITY, REPORT_CATEGORY } from "@/lib/api-mappers";
+import { useClientsQuery } from "@/store/api/people";
+import { useSubmitReportMutation } from "@/store/api/reports";
 
 const schema = z.object({
   client: z.string().min(1, "Select one of your clients."),
@@ -23,28 +24,44 @@ type Values = z.infer<typeof schema>;
 
 const DEFAULTS: Values = { client: "", title: "", category: REPORT_CATEGORIES[0], priority: "Normal", body: "", action: "" };
 
-/** CSR form for a new report to Compliance, limited to the CSR's own clients. */
+// Server field names that differ from this form's.
+const FIELD_OF: Record<string, keyof Values> = { clientId: "client", title: "title", category: "category", priority: "priority", body: "body", action: "action" };
+
+/** CSR form for a new report to Compliance, limited to the CSR's own clients (the clients list is already scoped to them). */
 export function ReportForm({ onSubmitted }: { onSubmitted: (id: string) => void }) {
-  const data = useData();
-  const me = useMe();
-  const dispatch = useAppDispatch();
-  const clients = data.users.filter((u) => u.role === "CLIENT" && u.status !== "Removed" && u.csr === me.id);
+  const run = useAction();
+  const [submitReport, { isLoading }] = useSubmitReportMutation();
+  const clients = useClientsQuery({ limit: 100, sort: "name", order: "asc" });
   const {
     register,
     handleSubmit,
     reset,
     setError,
-    formState: { errors, isValid, isSubmitting },
+    formState: { errors, isValid },
   } = useForm<Values>({ resolver: zodResolver(schema), defaultValues: DEFAULTS, mode: "onChange" });
 
-  const submit = handleSubmit((values) => {
-    const result = dispatch(submitReport({ ...values, priority: values.priority as Priority }));
-    if (!result.ok) {
-      setError("client", { message: result.error });
+  const submit = handleSubmit(async (values) => {
+    const outcome = await run(
+      submitReport({
+        clientId: values.client,
+        title: values.title,
+        body: values.body,
+        category: REPORT_CATEGORY.toKey(values.category),
+        priority: PRIORITY.toKey(values.priority),
+        action: values.action.trim() || undefined,
+      }),
+      { success: "Report sent to Compliance", quiet: true },
+    );
+    if (outcome.ok) {
+      reset(DEFAULTS);
+      onSubmitted(outcome.data.id);
       return;
     }
-    reset(DEFAULTS);
-    if (typeof result.id === "string") onSubmitted(result.id);
+    const e = outcome.error;
+    if (e.errorCode === "PERMISSION_DENIED") return;
+    const known = e.fieldErrors.filter((fe) => FIELD_OF[fe.field]);
+    if (known.length) known.forEach((fe) => setError(FIELD_OF[fe.field] as keyof Values, { message: fe.message }));
+    else setError("client", { message: e.message });
   });
 
   return (
@@ -54,8 +71,8 @@ export function ReportForm({ onSubmitted }: { onSubmitted: (id: string) => void 
         <Field label="Client and case" error={errors.client?.message}>
           {(id, describedBy) => (
             <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.client)} {...register("client")}>
-              <option value="">Select one of your clients</option>
-              {clients.map((c) => (
+              <option value="">{clients.isLoading ? "Loading your clients…" : "Select one of your clients"}</option>
+              {(clients.data?.items ?? []).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} · {c.caseId}
                 </option>
@@ -97,7 +114,7 @@ export function ReportForm({ onSubmitted }: { onSubmitted: (id: string) => void 
             id={id}
             aria-describedby={describedBy}
             invalid={Boolean(errors.body)}
-            placeholder="What the client said and what's missing. Describe documents in words; don't attach them."
+            placeholder="What the client said and what is missing. Describe documents in words; do not attach them."
             {...register("body")}
           />
         )}
@@ -106,9 +123,9 @@ export function ReportForm({ onSubmitted }: { onSubmitted: (id: string) => void 
         {(id) => <Input id={id} placeholder="What do you need Compliance to do?" {...register("action")} />}
       </Field>
       <div className="flex items-center justify-end gap-2">
-        <span className="help flex-1">File attachments aren&apos;t available in reports.</span>
-        <Button type="submit" variant="primary" disabled={!isValid || isSubmitting}>
-          Submit to Compliance
+        <span className="help flex-1">File attachments are not available in reports.</span>
+        <Button type="submit" variant="primary" disabled={!isValid || isLoading}>
+          {isLoading ? "Sending…" : "Submit to Compliance"}
         </Button>
       </div>
     </form>

@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 
+import { ErrorState, Skeleton } from "@/components/common/query-state";
 import { ReassignDialog } from "@/components/features/people/person-dialogs";
 import type { ViewProps } from "@/components/features/workspace/types";
 import { Badge } from "@/components/ui/badge";
@@ -9,12 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState, PageHeader, Tabs, type SegmentOption } from "@/components/ui/primitives";
 import { CASE_TONE, PRIORITY_TONE, STAGES } from "@/constants/vocab";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
-import { dISO, fmtDay, relDay } from "@/lib/dates";
+import { useMe } from "@/hooks/useStore";
+import { fmtDay, relDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
-import { openConversation } from "@/store/actions/comms";
-import { requestReassign } from "@/store/actions/people";
-import { projectById, userById } from "@/store/selectors";
+import { useCaseQuery } from "@/store/api/cases";
+import { useClientQuery } from "@/store/api/people";
 import type { Project, User } from "@/types/domain";
 import { caseViewFor, isDone } from "./case-data";
 import { ActivityTab, OverviewTab, TimelineTab } from "./case-info-tabs";
@@ -25,7 +25,7 @@ import { NotesTab, TasksTab } from "./case-work-tabs";
 
 type TabId = "overview" | "timeline" | "tasks" | "documents" | "filings" | "messages" | "notes" | "activity";
 
-function tabsFor(canFilings: boolean): Array<SegmentOption<TabId>> {
+function tabsFor(canFilings: boolean, canActivity: boolean): Array<SegmentOption<TabId>> {
   const tabs: Array<SegmentOption<TabId>> = [
     { value: "overview", label: "Overview" },
     { value: "timeline", label: "Timeline" },
@@ -33,18 +33,24 @@ function tabsFor(canFilings: boolean): Array<SegmentOption<TabId>> {
     { value: "documents", label: "Documents" },
     { value: "messages", label: "Messages" },
     { value: "notes", label: "Internal notes" },
-    { value: "activity", label: "Activity" },
   ];
+  if (canActivity) tabs.push({ value: "activity", label: "Activity" });
   if (canFilings) tabs.splice(4, 0, { value: "filings", label: "Filings" });
   return tabs;
 }
 
-/** One case, shared by Admin, Manager, Compliance and the client's CSR. */
+const todayUtc = (): string => new Date().toISOString().slice(0, 10);
+
+/**
+ * One case, shared by Admin, Manager, Compliance and the client's CSR. `projectId` is the case's API id (the address is
+ * /cases/<id> or /clients/<id>); the PRJ number people read comes from the record. A case outside the caller's scope is a 404.
+ */
 export function CaseDetail({ nav, projectId }: ViewProps & { projectId: string }) {
-  const data = useData();
   const me = useMe();
-  const project = projectById(data, projectId);
-  const client = userById(data, project?.client);
+  const result = useCaseQuery(projectId);
+  const project = result.data;
+  const clientResult = useClientQuery(project?.client ?? "", { skip: !project });
+  const client = clientResult.data;
   const backLabel = me.role === "ADMIN" || me.role === "MANAGER" ? "All cases" : "Clients";
   const back = (
     <div>
@@ -55,11 +61,33 @@ export function CaseDetail({ nav, projectId }: ViewProps & { projectId: string }
     </div>
   );
 
-  if (!project || !client || !can(me, "viewClient", client)) {
+  if (result.isLoading || (project && clientResult.isLoading)) {
     return (
       <div className="stack-16">
         {back}
-        <EmptyState title="Case not available" text="This case doesn't exist, or it isn't in your scope." />
+        <Skeleton rows={6} />
+      </div>
+    );
+  }
+  if (result.isError) {
+    const notFound = (result.error as { status?: number } | undefined)?.status === 404;
+    return (
+      <div className="stack-16">
+        {back}
+        {notFound ? (
+          <EmptyState title="Case not available" text="This case doesn't exist, or it isn't in your scope." />
+        ) : (
+          <ErrorState error={result.error} onRetry={() => void result.refetch()} title="We couldn't load this case" />
+        )}
+      </div>
+    );
+  }
+  if (!project) return null;
+  if (!client) {
+    return (
+      <div className="stack-16">
+        {back}
+        <ErrorState error={clientResult.error} onRetry={() => void clientResult.refetch()} title="We couldn't load the client" />
       </div>
     );
   }
@@ -67,24 +95,14 @@ export function CaseDetail({ nav, projectId }: ViewProps & { projectId: string }
 }
 
 function CaseDetailBody({ nav, project, client, back }: ViewProps & { project: Project; client: User; back: ReactNode }) {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
   const [editing, setEditing] = useState(false);
-  const [reassignId, setReassignId] = useState<string | null>(null);
+  const [reassign, setReassign] = useState<User | null>(null);
 
-  const tabs = tabsFor(me.role === "COMPLIANCE" || me.role === "ADMIN" || me.role === "MANAGER");
+  const tabs = tabsFor(me.role === "COMPLIANCE" || me.role === "ADMIN" || me.role === "MANAGER", can(me, "auditLog"));
   const requested = nav.param("tab");
   const tab = tabs.find((t) => t.value === requested)?.value ?? "overview";
-  const overdue = Boolean(project.deadline) && project.deadline < dISO(0) && !isDone(project);
-  const csr = userById(data, client.csr);
-
-  const openConv = () => {
-    if (dispatch(openConversation(client.id))) nav.go("messages", { query: { c: client.id } });
-  };
-  const reassign = () => {
-    if (dispatch(requestReassign(client.id))) setReassignId(client.id);
-  };
+  const overdue = Boolean(project.deadline) && project.deadline < todayUtc() && !isDone(project);
 
   return (
     <div className="stack-16">
@@ -110,13 +128,13 @@ function CaseDetailBody({ nav, project, client, back }: ViewProps & { project: P
         }
         actions={
           <>
-            {can(me, "conversation", client) ? (
-              <Button onClick={openConv}>
+            {can(me, "conversation", { id: client.id, csr: client.csr }) ? (
+              <Button onClick={() => nav.go("messages", { query: { c: client.id } })}>
                 <Icon name="msg" small />
                 Message client
               </Button>
             ) : null}
-            {csr && can(me, "reassignClient", client) ? <Button onClick={reassign}>Reassign CSR</Button> : null}
+            {client.csr && can(me, "reassignClient", client) ? <Button onClick={() => setReassign(client)}>Reassign CSR</Button> : null}
             {can(me, "editCase") ? (
               <Button variant="primary" onClick={() => setEditing(true)}>
                 <Icon name="edit" small />
@@ -136,8 +154,8 @@ function CaseDetailBody({ nav, project, client, back }: ViewProps & { project: P
       {tab === "messages" ? <MessagesTab project={project} client={client} nav={nav} /> : null}
       {tab === "notes" ? <NotesTab project={project} client={client} /> : null}
       {tab === "activity" ? <ActivityTab project={project} client={client} /> : null}
-      {editing ? <EditCaseDialog projectId={project.id} onClose={() => setEditing(false)} /> : null}
-      <ReassignDialog userId={reassignId} onClose={() => setReassignId(null)} />
+      {editing ? <EditCaseDialog project={project} onClose={() => setEditing(false)} /> : null}
+      <ReassignDialog user={reassign} onClose={() => setReassign(null)} />
     </div>
   );
 }

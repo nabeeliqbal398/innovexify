@@ -4,25 +4,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Callout } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { useData } from "@/hooks/useStore";
-import { ago, dISO, fmtDay, relDay } from "@/lib/dates";
-import { userName } from "@/store/selectors";
+import { ago, fmtDay, relDay } from "@/lib/dates";
 import type { FollowUp } from "@/types/domain";
 
 interface FollowupRowProps {
   followup: FollowUp;
   showCsr: boolean;
+  /** The server's date for "today" (YYYY-MM-DD, UTC), so the row agrees with the filters. */
+  today: string;
   onComplete: () => void;
   onOpenClient: () => void;
 }
 
-export function FollowupRow({ followup: f, showCsr, onComplete, onOpenClient }: FollowupRowProps) {
-  const data = useData();
-  const client = data.users.find((u) => u.id === f.client);
-  const project = data.projects.find((p) => p.client === f.client);
-  const today = dISO(0);
+export function FollowupRow({ followup: f, showCsr, today, onComplete, onOpenClient }: FollowupRowProps) {
   const open = f.status === "Open";
-  const late = open && f.due < today;
+  const late = open && f.overdue;
   const status = !open
     ? { label: "Completed", tone: "ok" as const }
     : late
@@ -38,13 +34,13 @@ export function FollowupRow({ followup: f, showCsr, onComplete, onOpenClient }: 
         <div className="font-medium">
           {f.type} ·{" "}
           <button type="button" className="linkb font-medium" onClick={onOpenClient}>
-            {client?.name}
+            {f.clientName}
           </button>
         </div>
         <div className="mini">{f.note}</div>
         <div className="help">
-          <span className="mono">{client?.caseId}</span> · {project ? project.id : "No case"}
-          {showCsr ? ` · CSR ${userName(data, f.csr)}` : ""}
+          <span className="mono">{f.clientCaseId}</span>
+          {showCsr ? ` · CSR ${f.csrName}` : ""}
         </div>
         {f.outcome ? (
           <Callout tone="ok" className="mt-1.5">

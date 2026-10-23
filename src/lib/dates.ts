@@ -21,7 +21,7 @@ export function dayStart(t: number = Date.now()): number {
   return d.getTime();
 }
 
-/** Millisecond timestamp for `days` from today at `hour` o'clock. Seeded dates stay relative to the viewer's today. */
+/** Millisecond timestamp for `days` from today at `hour` o'clock. */
 export function atOff(days: number, hour = 10): number {
   const d = new Date(dayStart() + days * DAY);
   d.setHours(hour, 0, 0, 0);

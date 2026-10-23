@@ -1,7 +1,6 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -9,47 +8,64 @@ import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/dialog";
 import { Field, FieldRow, Input, Textarea } from "@/components/ui/form";
 import { Callout } from "@/components/ui/primitives";
+import { useAction } from "@/hooks/useAction";
+import { useMe } from "@/hooks/useStore";
 import { can } from "@/lib/permissions";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
-import { saveService } from "@/store/actions/cases";
+import { flash } from "@/lib/toast";
+import { useSetServiceActiveMutation, useUpdateServiceMutation } from "@/store/api/system";
 import type { Service } from "@/types/domain";
 
 const schema = z.object({
-  desc: z.string().trim().min(1, "Add a short description."),
-  turnaround: z.string(),
-  fee: z.string(),
+  desc: z.string().trim().min(2, "Add a short description.").max(500, "Keep the description under 500 characters."),
+  turnaround: z.string().max(80, "Keep it under 80 characters."),
+  fee: z.string().max(80, "Keep it under 80 characters."),
   active: z.boolean(),
 });
 type FormValues = z.infer<typeof schema>;
 
 function ServiceBody({ service }: { service: Service }) {
-  const dispatch = useAppDispatch();
   const me = useMe();
+  const run = useAction();
   const canEdit = can(me, "manageServices");
-  const [formError, setFormError] = useState("");
+  const [update, updating] = useUpdateServiceMutation();
+  const [setActive, switching] = useSetServiceActiveMutation();
   const {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isValid, isSubmitting },
+    setError,
+    formState: { errors, isValid },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: "onChange",
     defaultValues: { desc: service.desc, turnaround: service.turnaround, fee: service.fee, active: service.active },
   });
 
-  const submit = handleSubmit((values) => {
-    const result = dispatch(saveService(service.id, values));
-    if (result.ok) {
-      setFormError("");
-      reset(values);
-    } else if (result.error && result.error !== "Not allowed.") setFormError(result.error);
+  const submit = handleSubmit(async (values) => {
+    // Description, turnaround and fee are one edit; switching the service on or off is its own request, as on the server.
+    const edit: { description?: string; turnaround?: string; fee?: string } = {};
+    if (values.desc !== service.desc) edit.description = values.desc;
+    if (values.turnaround !== service.turnaround) edit.turnaround = values.turnaround;
+    if (values.fee !== service.fee) edit.fee = values.fee;
+    if (Object.keys(edit).length > 0) {
+      const outcome = await run(update({ id: service.id, ...edit }), { setError, fields: ["description", "turnaround", "fee"] });
+      if (!outcome.ok) return;
+    }
+    if (values.active !== service.active) {
+      const outcome = await run(setActive({ id: service.id, active: values.active }), {
+        success: values.active ? "Service switched on." : "Service switched off. Cases already opened for it are unchanged.",
+      });
+      if (!outcome.ok) return;
+    } else if (Object.keys(edit).length > 0) {
+      flash("Service saved.");
+    }
+    reset(values);
   });
 
   return (
     <>
       <Callout tone="lock" icon="alert">
-        Fee and turnaround are internal demo fields, not prices or guarantees shown to clients.
+        Fee and turnaround are internal fields, not prices or guarantees shown to clients.
       </Callout>
       {canEdit ? (
         <form onSubmit={submit} className="flex flex-col gap-3.5" noValidate>
@@ -57,20 +73,19 @@ function ServiceBody({ service }: { service: Service }) {
             {(id, describedBy) => <Textarea id={id} aria-describedby={describedBy} invalid={Boolean(errors.desc)} {...register("desc")} />}
           </Field>
           <FieldRow>
-            <Field label="Expected turnaround">{(id) => <Input id={id} placeholder="Not set" {...register("turnaround")} />}</Field>
-            <Field label="Applicable fees">{(id) => <Input id={id} placeholder="Not set" {...register("fee")} />}</Field>
+            <Field label="Expected turnaround" error={errors.turnaround?.message}>
+              {(id) => <Input id={id} placeholder="Not set" {...register("turnaround")} />}
+            </Field>
+            <Field label="Applicable fees" error={errors.fee?.message}>
+              {(id) => <Input id={id} placeholder="Not set" {...register("fee")} />}
+            </Field>
           </FieldRow>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" className="size-[18px] accent-primary" {...register("active")} />
             Offered to clients
           </label>
-          {formError ? (
-            <Callout tone="warn" role="alert">
-              {formError}
-            </Callout>
-          ) : null}
-          <Button type="submit" variant="primary" className="self-start" disabled={!isValid || isSubmitting}>
-            Save service
+          <Button type="submit" variant="primary" className="self-start" disabled={!isValid || updating.isLoading || switching.isLoading}>
+            {updating.isLoading || switching.isLoading ? "Saving…" : "Save service"}
           </Button>
         </form>
       ) : (
@@ -110,13 +125,11 @@ function ServiceBody({ service }: { service: Service }) {
 }
 
 interface ServiceDrawerProps {
-  serviceId: string | null;
+  service: Service | null;
   onClose: () => void;
 }
 
-export function ServiceDrawer({ serviceId, onClose }: ServiceDrawerProps) {
-  const data = useData();
-  const service = data.services.find((s) => s.id === serviceId);
+export function ServiceDrawer({ service, onClose }: ServiceDrawerProps) {
   return (
     <Drawer
       open={Boolean(service)}
@@ -124,7 +137,7 @@ export function ServiceDrawer({ serviceId, onClose }: ServiceDrawerProps) {
       title={service?.name ?? "Service"}
       subtitle={service ? `${service.category} · ${service.active ? "Offered" : "Not offered"}` : undefined}
     >
-      {service ? <ServiceBody key={service.id} service={service} /> : null}
+      {service ? <ServiceBody key={`${service.id}-${service.desc}-${service.active}`} service={service} /> : null}
     </Drawer>
   );
 }

@@ -1,10 +1,17 @@
 import { configureStore, type ThunkAction, type UnknownAction } from "@reduxjs/toolkit";
 
-import { workspaceReducer } from "./workspaceSlice";
+import { baseApi } from "./api/base";
+import { sessionReducer } from "./sessionSlice";
+import { uiReducer } from "./uiSlice";
 
 export function makeStore() {
   return configureStore({
-    reducer: { workspace: workspaceReducer },
+    reducer: {
+      [baseApi.reducerPath]: baseApi.reducer,
+      session: sessionReducer,
+      ui: uiReducer,
+    },
+    middleware: (getDefault) => getDefault().concat(baseApi.middleware),
   });
 }
 

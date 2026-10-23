@@ -2,109 +2,79 @@
 
 import { useState } from "react";
 
+import { Pager } from "@/components/common/pager";
+import { QueryState } from "@/components/common/query-state";
 import { AddFollowupDialog, CompleteFollowupDialog, InteractionDialog } from "@/components/features/followups/followup-dialogs";
-import { requestFollowupDialog } from "@/components/features/followups/actions";
 import { FollowupRow } from "@/components/features/followups/followup-row";
 import type { ViewProps } from "@/components/features/workspace/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { Chip, Count, EmptyState, PageHeader, Timeline, type TimelineItem } from "@/components/ui/primitives";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
-import { dISO, fmtAt } from "@/lib/dates";
-import { can } from "@/lib/permissions";
-import { userName } from "@/store/selectors";
+import { Chip, Count, PageHeader, Timeline, type TimelineItem } from "@/components/ui/primitives";
+import { useMe } from "@/hooks/useStore";
+import { fmtAt } from "@/lib/dates";
+import { useFollowUpsQuery, useRecentInteractionsQuery, type ListFollowUpsParams } from "@/store/api/cases";
 import type { FollowUp } from "@/types/domain";
 
 type FilterId = "today" | "overdue" | "upcoming" | "done" | "all";
-type Dialog = { kind: "add" } | { kind: "interaction" } | { kind: "complete"; id: number } | null;
+type Dialog = { kind: "add" } | { kind: "interaction" } | { kind: "complete"; followup: FollowUp } | null;
 
-const FILTERS: ReadonlyArray<{ id: FilterId; label: string; test: (f: FollowUp, today: string) => boolean }> = [
-  { id: "today", label: "Due today", test: (f, today) => f.status === "Open" && f.due === today },
-  { id: "overdue", label: "Overdue", test: (f, today) => f.status === "Open" && f.due < today },
-  { id: "upcoming", label: "Upcoming", test: (f, today) => f.status === "Open" && f.due > today },
-  { id: "done", label: "Completed", test: (f) => f.status === "Done" },
-  { id: "all", label: "All", test: () => true },
+const PAGE_SIZE = 10;
+const FILTERS: ReadonlyArray<{ id: FilterId; label: string; params: ListFollowUpsParams }> = [
+  { id: "today", label: "Due today", params: { filter: "today" } },
+  { id: "overdue", label: "Overdue", params: { filter: "overdue" } },
+  { id: "upcoming", label: "Upcoming", params: { filter: "upcoming" } },
+  { id: "done", label: "Completed", params: { status: "DONE", sort: "doneAt", order: "desc" } },
+  { id: "all", label: "All", params: {} },
 ];
 
-interface TimelineEntry {
-  key: string;
-  kind: string;
-  tone: "teal" | "ok";
-  text: string;
-  who: string;
-  client: string;
-  at: number;
+const utcToday = (): string => new Date().toISOString().slice(0, 10);
+
+/** A chip's number: the server's total for that filter (a one-row query, so the page is not loaded twice). */
+function FilterChip({ filter, active, clientId, onClick }: { filter: (typeof FILTERS)[number]; active: boolean; clientId?: string; onClick: () => void }) {
+  const count = useFollowUpsQuery({ ...filter.params, ...(clientId ? { clientId } : {}), limit: 1 });
+  return (
+    <Chip active={active} onClick={onClick}>
+      {filter.label} <Count>{count.data?.meta.total ?? "…"}</Count>
+    </Chip>
+  );
 }
 
 export function FollowupsView({ nav }: ViewProps) {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
   const [filter, setFilter] = useState<FilterId>(FILTERS.find((f) => f.id === nav.param("filter"))?.id ?? "today");
+  const [page, setPage] = useState(1);
   const [dialog, setDialog] = useState<Dialog>(null);
-  const today = dISO(0);
   const clientParam = nav.param("client");
   const isCsr = me.role === "CSR";
-
-  const mine = data.followups.filter((f) => {
-    const client = data.users.find((u) => u.id === f.client);
-    return (
-      client !== undefined &&
-      can(me, "followups", client) &&
-      (!isCsr || f.csr === me.id || client.csr === me.id) &&
-      (!clientParam || f.client === clientParam)
-    );
-  });
   const active = FILTERS.find((f) => f.id === filter) ?? FILTERS[0];
-  const rows = mine.filter((f) => active.test(f, today)).sort((a, b) => (a.due < b.due ? -1 : 1));
 
-  const entries: TimelineEntry[] = [
-    ...data.interactions.flatMap((i): TimelineEntry[] => {
-      const client = data.users.find((u) => u.id === i.client);
-      if (!client || !can(me, "followups", client) || (isCsr && client.csr !== me.id) || (clientParam && i.client !== clientParam)) return [];
-      return [{ key: `i${i.id}`, kind: i.kind, tone: "teal", text: i.text, who: userName(data, i.by), client: client.name, at: i.at }];
-    }),
-    ...mine
-      .filter((f) => f.status === "Done")
-      .map(
-        (f): TimelineEntry => ({
-          key: `f${f.id}`,
-          kind: "Follow-up",
-          tone: "ok",
-          text: `${f.type}: ${f.outcome || f.note}`,
-          who: userName(data, f.csr),
-          client: userName(data, f.client),
-          at: f.doneAt ?? 0,
-        }),
-      ),
-  ]
-    .sort((a, b) => b.at - a.at)
-    .slice(0, 12);
+  const list = useFollowUpsQuery({ ...active.params, ...(clientParam ? { clientId: clientParam } : {}), page, limit: PAGE_SIZE });
+  const recent = useRecentInteractionsQuery({ ...(clientParam ? { clientId: clientParam } : {}), limit: 12 });
+  const rows = list.data?.items ?? [];
+  const meta = list.data?.meta;
+  const today = utcToday();
 
-  const timelineItems: TimelineItem[] = entries.map((e) => ({
-    id: e.key,
+  const timelineItems: TimelineItem[] = (recent.data?.items ?? []).map((i) => ({
+    id: i.id,
     dotClass: "bg-teal",
     content: (
       <>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge tone={e.tone} compact>
-            {e.kind}
+          <Badge tone="teal" compact>
+            {i.kind}
           </Badge>
-          <strong className="text-sm">{e.client}</strong>
+          <strong className="text-sm">{i.clientName}</strong>
         </div>
-        <div className="mini">{e.text}</div>
+        <div className="mini">{i.text}</div>
         <div className="help">
-          {e.who} · {fmtAt(e.at)}
+          {i.byName} · {fmtAt(i.at)}
         </div>
       </>
     ),
   }));
 
-  const request = (label: string, next: Dialog) => {
-    if (dispatch(requestFollowupDialog(label, clientParam || undefined))) setDialog(next);
-  };
-  const clientName = userName(data, clientParam);
+  const clientName = rows.find((f) => f.client === clientParam)?.clientName ?? recent.data?.items.find((i) => i.client === clientParam)?.clientName ?? "this client";
 
   return (
     <div className="stack-16">
@@ -113,8 +83,8 @@ export function FollowupsView({ nav }: ViewProps) {
         description={isCsr ? "Reminders and client contacts for your assigned clients." : "Follow-ups across all CSRs. CSRs see only their own clients."}
         actions={
           <>
-            <Button onClick={() => request("Open record interaction", { kind: "interaction" })}>Record interaction</Button>
-            <Button variant="primary" onClick={() => request("Open add follow-up", { kind: "add" })}>
+            <Button onClick={() => setDialog({ kind: "interaction" })}>Record interaction</Button>
+            <Button variant="primary" onClick={() => setDialog({ kind: "add" })}>
               <Icon name="plus" small />
               Add reminder
             </Button>
@@ -123,9 +93,16 @@ export function FollowupsView({ nav }: ViewProps) {
       />
       <div role="group" aria-label="Follow-up filter" className="flex flex-wrap gap-1.5">
         {FILTERS.map((f) => (
-          <Chip key={f.id} active={filter === f.id} onClick={() => setFilter(f.id)}>
-            {f.label} <Count>{mine.filter((x) => f.test(x, today)).length}</Count>
-          </Chip>
+          <FilterChip
+            key={f.id}
+            filter={f}
+            active={filter === f.id}
+            clientId={clientParam || undefined}
+            onClick={() => {
+              setFilter(f.id);
+              setPage(1);
+            }}
+          />
         ))}
         {clientParam ? (
           <Chip active onClick={() => nav.setParams({ client: undefined })} aria-label={`Showing ${clientName} only, clear client filter`}>
@@ -136,19 +113,32 @@ export function FollowupsView({ nav }: ViewProps) {
       </div>
       <div className="grid2">
         <section className="card overflow-hidden">
-          {rows.map((f) => (
-            <FollowupRow
-              key={f.id}
-              followup={f}
-              showCsr={!isCsr}
-              onComplete={() => request("Open complete follow-up", { kind: "complete", id: f.id })}
-              onOpenClient={() => nav.go("clients", { query: { client: f.client, tab: "timeline" } })}
-            />
-          ))}
-          {rows.length === 0 ? (
-            <EmptyState
-              title="All clear"
-              text={filter === "today" ? "Nothing due today. Check Overdue or Upcoming." : "No follow-ups in this view."}
+          <QueryState
+            query={list}
+            isEmpty={rows.length === 0}
+            empty={{ title: "All clear", text: filter === "today" ? "Nothing due today. Check Overdue or Upcoming." : "No follow-ups in this view." }}
+            rows={4}
+          >
+            {rows.map((f) => (
+              <FollowupRow
+                key={f.id}
+                followup={f}
+                showCsr={!isCsr}
+                today={today}
+                onComplete={() => setDialog({ kind: "complete", followup: f })}
+                onOpenClient={() => nav.go("clients", { query: { client: f.client, tab: "timeline" } })}
+              />
+            ))}
+          </QueryState>
+          {meta && meta.total > PAGE_SIZE ? (
+            <Pager
+              page={meta.page - 1}
+              pageCount={meta.totalPages}
+              total={meta.total}
+              pageSize={PAGE_SIZE}
+              noun="follow-ups"
+              onPrev={() => setPage((p) => Math.max(1, p - 1))}
+              onNext={() => setPage((p) => p + 1)}
             />
           ) : null}
         </section>
@@ -158,16 +148,20 @@ export function FollowupsView({ nav }: ViewProps) {
             <span className="help">Client-facing only</span>
           </div>
           <div className="card-b">
-            <Timeline items={timelineItems} />
-            {entries.length === 0 ? (
-              <EmptyState title="No interactions recorded" text="Record a call, email or meeting so the team can see it." />
-            ) : null}
+            <QueryState
+              query={recent}
+              isEmpty={timelineItems.length === 0}
+              empty={{ title: "No interactions recorded", text: "Record a call, email or meeting so the team can see it." }}
+              rows={3}
+            >
+              <Timeline items={timelineItems} />
+            </QueryState>
           </div>
         </section>
       </div>
       {dialog?.kind === "add" ? <AddFollowupDialog clientId={clientParam || undefined} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === "interaction" ? <InteractionDialog clientId={clientParam || undefined} onClose={() => setDialog(null)} /> : null}
-      {dialog?.kind === "complete" ? <CompleteFollowupDialog followupId={dialog.id} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "complete" ? <CompleteFollowupDialog followup={dialog.followup} onClose={() => setDialog(null)} /> : null}
     </div>
   );
 }

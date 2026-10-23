@@ -9,10 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Modal, ModalFooter } from "@/components/ui/dialog";
 import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import { ROLE_LABEL } from "@/constants/vocab";
+import { useAction } from "@/hooks/useAction";
 import { emailSchema } from "@/lib/validators";
-import { useAppDispatch, useData } from "@/hooks/useStore";
-import { changeEmail, reassignCsr, removeUser } from "@/store/actions/people";
-import { userName } from "@/store/selectors";
+import { useChangeCsrMutation, useChangeEmailMutation, useDirectoryQuery, useRemoveUserMutation } from "@/store/api/people";
+import type { User } from "@/types/domain";
 
 function Summary({ rows }: { rows: ReadonlyArray<readonly [string, string, boolean?]> }) {
   return (
@@ -28,8 +28,8 @@ function Summary({ rows }: { rows: ReadonlyArray<readonly [string, string, boole
 }
 
 interface DialogProps {
-  /** Id of the person the dialog acts on, or null when closed. */
-  userId: string | null;
+  /** The person the dialog acts on, or null when closed. */
+  user: User | null;
   onClose: () => void;
 }
 
@@ -39,12 +39,12 @@ const reassignSchema = z.object({
 });
 type ReassignValues = z.infer<typeof reassignSchema>;
 
-/** Change a client's CSR. Only Admin and Manager reach this; the action checks again. */
-export function ReassignDialog({ userId, onClose }: DialogProps) {
-  const data = useData();
-  const dispatch = useAppDispatch();
-  const client = data.users.find((u) => u.id === userId);
-  const csrs = data.users.filter((u) => u.role === "CSR" && u.status === "Active" && u.id !== client?.csr);
+/** Change a client's CSR. The server checks who may do this. */
+export function ReassignDialog({ user: client, onClose }: DialogProps) {
+  const run = useAction();
+  const csrs = useDirectoryQuery({ role: "CSR" }, { skip: !client });
+  const [changeCsr, { isLoading }] = useChangeCsrMutation();
+  const options = (csrs.data ?? []).filter((c) => c.id !== client?.csr);
   const {
     register,
     handleSubmit,
@@ -54,31 +54,28 @@ export function ReassignDialog({ userId, onClose }: DialogProps) {
   } = useForm<ReassignValues>({ resolver: zodResolver(reassignSchema), defaultValues: { csr: "", reason: "" }, mode: "onChange" });
 
   useEffect(() => {
-    if (userId) reset({ csr: "", reason: "" });
-  }, [userId, reset]);
+    if (client) reset({ csr: "", reason: "" });
+  }, [client, reset]);
 
-  const submit = handleSubmit((values) => {
+  const submit = handleSubmit(async (values) => {
     if (!client) return;
-    const result = dispatch(reassignCsr(client.id, values.csr, values.reason));
-    if (result.ok) onClose();
-    else setError("csr", { message: result.error });
+    const target = options.find((c) => c.id === values.csr);
+    const outcome = await run(changeCsr({ id: client.id, csrId: values.csr, reason: values.reason.trim() || undefined }), {
+      success: `${client.name} now assigned to ${target?.name ?? "the new CSR"}`,
+    });
+    if (outcome.ok) onClose();
+    else if (outcome.error.errorCode === "VALIDATION_FAILED") setError("csr", { message: outcome.error.fieldErrors[0]?.message ?? outcome.error.message });
   });
 
   return (
     <Modal open={Boolean(client)} onOpenChange={(o) => !o && onClose()} title="Reassign CSR">
       <form onSubmit={submit} noValidate className="flex flex-col gap-3.5">
-        <Summary
-          rows={[
-            ["Client", client?.name ?? ""],
-            ["Case ID", client?.caseId ?? "", true],
-            ["Current CSR", userName(data, client?.csr)],
-          ]}
-        />
+        <Summary rows={[["Client", client?.name ?? ""], ["Case ID", client?.caseId ?? "", true], ["Current CSR", client?.csrName ?? "Unassigned"]]} />
         <Field label="New CSR" error={errors.csr?.message}>
           {(id, describedBy) => (
             <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.csr)} {...register("csr")}>
-              <option value="">Select CSR</option>
-              {csrs.map((c) => (
+              <option value="">{csrs.isLoading ? "Loading…" : "Select CSR"}</option>
+              {options.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -91,8 +88,8 @@ export function ReassignDialog({ userId, onClose }: DialogProps) {
         </Field>
         <ModalFooter>
           <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={!isValid}>
-            Reassign
+          <Button type="submit" variant="primary" disabled={!isValid || isLoading}>
+            {isLoading ? "Reassigning…" : "Reassign"}
           </Button>
         </ModalFooter>
       </form>
@@ -104,10 +101,9 @@ const emailFormSchema = z.object({ email: emailSchema });
 type EmailValues = z.infer<typeof emailFormSchema>;
 
 /** Change a login email. The role and records stay the same. */
-export function EmailDialog({ userId, onClose }: DialogProps) {
-  const data = useData();
-  const dispatch = useAppDispatch();
-  const target = data.users.find((u) => u.id === userId);
+export function EmailDialog({ user: target, onClose }: DialogProps) {
+  const run = useAction();
+  const [changeEmail, { isLoading }] = useChangeEmailMutation();
   const {
     register,
     handleSubmit,
@@ -120,34 +116,33 @@ export function EmailDialog({ userId, onClose }: DialogProps) {
     if (target) reset({ email: target.email });
   }, [target, reset]);
 
-  const submit = handleSubmit((values) => {
+  const submit = handleSubmit(async (values) => {
     if (!target) return;
-    const result = dispatch(changeEmail(target.id, values.email));
-    if (result.ok) onClose();
-    else setError("email", { message: result.error });
+    const outcome = await run(changeEmail({ id: target.id, email: values.email }), {
+      success: "Email updated. The old address was told about the change.",
+      setError,
+      fields: ["email"],
+      quiet: true,
+    });
+    if (outcome.ok) onClose();
+    else if (outcome.error.fieldErrors.length === 0 && outcome.error.errorCode !== "PERMISSION_DENIED") setError("email", { message: outcome.error.message });
   });
 
   return (
     <Modal open={Boolean(target)} onOpenChange={(o) => !o && onClose()} title="Change login email">
       <form onSubmit={submit} noValidate className="flex flex-col gap-3.5">
-        <Summary
-          rows={[
-            ["Account", target?.name ?? ""],
-            ["Role", target ? ROLE_LABEL[target.role] : ""],
-            ["Current email", target?.email ?? ""],
-          ]}
-        />
+        <Summary rows={[["Account", target?.name ?? ""], ["Role", target ? ROLE_LABEL[target.role] : ""], ["Current email", target?.email ?? ""]]} />
         <Field
           label="New email"
           error={errors.email?.message}
-          help="The role and records stay the same. Production sends a verification link to the new address and a notice to the old one."
+          help="The role and records stay the same. A notice goes to the old address, and someone still invited gets a new invitation at the new one."
         >
           {(id, describedBy) => <Input id={id} type="email" aria-describedby={describedBy} invalid={Boolean(errors.email)} {...register("email")} />}
         </Field>
         <ModalFooter>
           <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary">
-            Update email
+          <Button type="submit" variant="primary" disabled={isLoading}>
+            {isLoading ? "Updating…" : "Update email"}
           </Button>
         </ModalFooter>
       </form>
@@ -156,10 +151,9 @@ export function EmailDialog({ userId, onClose }: DialogProps) {
 }
 
 /** Remove an account from the portal. The person must type the account email to confirm. */
-export function RemoveDialog({ userId, onClose }: DialogProps) {
-  const data = useData();
-  const dispatch = useAppDispatch();
-  const target = data.users.find((u) => u.id === userId);
+export function RemoveDialog({ user: target, onClose }: DialogProps) {
+  const run = useAction();
+  const [removeUser, { isLoading }] = useRemoveUserMutation();
   const confirmText = target?.email ?? "";
   const schema = z.object({
     confirm: z.string().refine((v) => v.trim().toLowerCase() === confirmText.toLowerCase(), "Type the email exactly to confirm."),
@@ -172,13 +166,13 @@ export function RemoveDialog({ userId, onClose }: DialogProps) {
   } = useForm<{ confirm: string }>({ resolver: zodResolver(schema), defaultValues: { confirm: "" }, mode: "onChange" });
 
   useEffect(() => {
-    if (userId) reset({ confirm: "" });
-  }, [userId, reset]);
+    if (target) reset({ confirm: "" });
+  }, [target, reset]);
 
-  const submit = handleSubmit(() => {
+  const submit = handleSubmit(async () => {
     if (!target) return;
-    const result = dispatch(removeUser(target.id));
-    if (result.ok) onClose();
+    const outcome = await run(removeUser(target.id), { success: `${target.name} removed from the portal` });
+    if (outcome.ok) onClose();
   });
 
   return (
@@ -200,8 +194,8 @@ export function RemoveDialog({ userId, onClose }: DialogProps) {
         </Field>
         <ModalFooter>
           <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="danger" disabled={!isValid}>
-            Remove user
+          <Button type="submit" variant="danger" disabled={!isValid || isLoading}>
+            {isLoading ? "Removing…" : "Remove user"}
           </Button>
         </ModalFooter>
       </form>

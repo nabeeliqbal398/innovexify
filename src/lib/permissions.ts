@@ -20,6 +20,7 @@ export type Permission =
   | "docsAccess"
   | "docsManage"
   | "docsReview"
+  | "deleteDocument"
   | "conversation"
   | "attachStaff"
   | "reportSend"
@@ -27,6 +28,7 @@ export type Permission =
   | "reportReview"
   | "announce"
   | "manageProjects"
+  | "rollbackStage"
   | "complianceMilestones"
   | "viewProjects"
   | "followUpTask"
@@ -46,8 +48,7 @@ export type Permission =
   | "caseNotesCompliance"
   | "help"
   | "manageTasks"
-  | "reportAck"
-  | "resetDemo";
+  | "reportAck";
 
 const ALL_STAFF: Role[] = ["ADMIN", "MANAGER", "CSR", "COMPLIANCE"];
 
@@ -70,6 +71,7 @@ export const PERMS: Record<Permission, Role[]> = {
   docsAccess: ["ADMIN", "MANAGER", "COMPLIANCE", "CLIENT"],
   docsManage: ["ADMIN", "MANAGER", "COMPLIANCE"],
   docsReview: ["ADMIN", "MANAGER", "COMPLIANCE"],
+  deleteDocument: ["ADMIN", "MANAGER"],
   conversation: [...ALL_STAFF, "CLIENT"],
   attachStaff: ["ADMIN", "MANAGER", "COMPLIANCE"],
   reportSend: ["CSR"],
@@ -77,6 +79,7 @@ export const PERMS: Record<Permission, Role[]> = {
   reportReview: ["COMPLIANCE"],
   announce: ["ADMIN", "MANAGER", "COMPLIANCE"],
   manageProjects: ["ADMIN", "MANAGER"],
+  rollbackStage: ["ADMIN", "MANAGER"],
   complianceMilestones: ["ADMIN", "MANAGER", "COMPLIANCE"],
   viewProjects: ALL_STAFF,
   followUpTask: ["ADMIN", "MANAGER", "CSR"],
@@ -97,7 +100,6 @@ export const PERMS: Record<Permission, Role[]> = {
   help: ALL_STAFF,
   manageTasks: ["ADMIN", "MANAGER"],
   reportAck: ["COMPLIANCE"],
-  resetDemo: [...ALL_STAFF, "CLIENT"],
 };
 
 export const REASON: Record<Permission | "default", string> = {
@@ -113,6 +115,7 @@ export const REASON: Record<Permission | "default", string> = {
     "CSRs can't open, preview, download or upload client documents, by any route. You can still see whether a document is required, awaiting review, approved or needs a correction.",
   docsManage: "Only Admin, Manager and Compliance can upload or request client documents.",
   docsReview: "Only Admin, Manager and Compliance can review documents.",
+  deleteDocument: "Only Admin and Manager can delete documents. They are kept for the record and hidden from everyone else.",
   viewClient: "You can only open records you're authorized to see.",
   viewClients: "You can only open records you're authorized to see.",
   updateEmail:
@@ -130,6 +133,7 @@ export const REASON: Record<Permission | "default", string> = {
   reportView: "Reports are internal and visible only to staff.",
   reportReview: "Only Compliance marks reports reviewed.",
   manageProjects: "Only Admin and Manager can create projects or move any formation stage.",
+  rollbackStage: "Only Admin and Manager can move a case back to an earlier stage, and only with a reason.",
   complianceMilestones:
     "You can't update this milestone. Compliance can move document stages; CSRs can only view progress.",
   viewProjects: "Projects are visible to staff only.",
@@ -151,7 +155,6 @@ export const REASON: Record<Permission | "default", string> = {
   help: "The staff help center is available to staff accounts.",
   manageTasks: "Only Admin and Manager can assign or edit any task.",
   reportAck: "Only Compliance acknowledges CSR reports.",
-  resetDemo: "Your role doesn't allow this action.",
   default: "Your role doesn't allow this action.",
 };
 
@@ -162,6 +165,8 @@ export interface PermissionResource {
   csr?: string | null;
   client?: string;
   csrOf?: string | null;
+  /** The stage a case is in now (Compliance may only move cases that are in a document stage). */
+  current?: string;
   target?: string;
 }
 
@@ -200,13 +205,10 @@ export function can(
   if ((perm === "followups" || perm === "caseNotes") && role === "CSR" && res && res.csr !== user.id) {
     return false;
   }
-  if (
-    perm === "complianceMilestones" &&
-    role === "COMPLIANCE" &&
-    res?.target !== undefined &&
-    !COMP_STAGES.includes(res.target)
-  ) {
-    return false;
+  if (perm === "complianceMilestones" && role === "COMPLIANCE" && res) {
+    // Compliance moves cases only between the document stages: both where the case is and where it would go.
+    if (res.target !== undefined && !COMP_STAGES.includes(res.target)) return false;
+    if (res.current !== undefined && !COMP_STAGES.includes(res.current)) return false;
   }
   return true;
 }
@@ -236,10 +238,10 @@ export const ACCESS_MATRIX: ReadonlyArray<readonly [string, Permission]> = [
 export function auditCategoryOf(perm?: Permission): string {
   if (!perm) return "";
   if (/^invite|removeUser|suspendUser|updateEmail/.test(perm)) return "users";
-  if (/^docs|attachStaff/.test(perm)) return "docs";
+  if (/^docs|attachStaff|deleteDocument/.test(perm)) return "docs";
   if (/^ticket/.test(perm)) return "tickets";
   if (
-    /complianceMilestones|manageProjects|editCase|caseNotes|assignNewClient|reassignClient|followUpTask|complianceTask|manageTasks|filingTracker|followups/.test(
+    /complianceMilestones|manageProjects|rollbackStage|editCase|caseNotes|assignNewClient|reassignClient|followUpTask|complianceTask|manageTasks|filingTracker|followups/.test(
       perm,
     )
   ) {

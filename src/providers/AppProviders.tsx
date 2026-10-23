@@ -1,11 +1,13 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Provider } from "react-redux";
 import { Slide, ToastContainer } from "react-toastify";
 
 import { Icon } from "@/components/ui/icon";
+import { bootstrapSession } from "@/lib/session";
 import { makeStore, type AppStore } from "@/store";
+import { sessionActions } from "@/store/sessionSlice";
 
 import "react-toastify/dist/ReactToastify.css";
 
@@ -26,9 +28,28 @@ function CloseButton({ closeToast }: { closeToast?: (e: React.MouseEvent<HTMLEle
 export function AppProviders({ children }: { children: ReactNode }) {
   const storeRef = useRef<AppStore | null>(null);
   if (!storeRef.current) storeRef.current = makeStore();
+  const store = storeRef.current;
+
+  // Who is signed in is decided once, at page load, from the refresh cookie.
+  useEffect(() => {
+    void bootstrapSession(store.dispatch);
+  }, [store]);
+
+  // Browser tests only (NEXT_PUBLIC_E2E_HOOKS is set for the test build, never otherwise): lets a test empty the in-memory access token.
+  useEffect(() => {
+    if (process.env.NEXT_PUBLIC_E2E_HOOKS !== "true") return undefined;
+    const w = window as unknown as { __e2e?: { dropToken: () => void; token: () => string | null } };
+    w.__e2e = {
+      dropToken: () => void store.dispatch(sessionActions.tokenSet("")),
+      token: () => store.getState().session.accessToken,
+    };
+    return () => {
+      delete w.__e2e;
+    };
+  }, [store]);
 
   return (
-    <Provider store={storeRef.current}>
+    <Provider store={store}>
       {children}
       <ToastContainer
         position="top-right"

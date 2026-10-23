@@ -1,7 +1,6 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -9,49 +8,60 @@ import { Button } from "@/components/ui/button";
 import { Modal, ModalFooter } from "@/components/ui/dialog";
 import { Field, FieldRow, Input, Select } from "@/components/ui/form";
 import { Callout } from "@/components/ui/primitives";
-import { CASE_STATUSES, PRIORITIES } from "@/constants/vocab";
-import { useAppDispatch, useData } from "@/hooks/useStore";
-import { saveCaseEdit } from "@/store/actions/cases";
-import { projectById, userName } from "@/store/selectors";
+import { PRIORITIES } from "@/constants/vocab";
+import { useAction } from "@/hooks/useAction";
+import { CASE_STATUS, EDITABLE_CASE_STATUSES, PRIORITY } from "@/lib/api-mappers";
+import { useCaseServicesQuery, useUpdateCaseMutation, type CaseChanges } from "@/store/api/cases";
+import { useDirectoryQuery } from "@/store/api/people";
+import type { Project } from "@/types/domain";
 
 const schema = z.object({
-  status: z.enum(["Not Started", "In Progress", "Awaiting Client", "Under Review", "Filing in Progress", "Completed", "On Hold", "Active", "Blocked"]),
+  status: z.string(),
   priority: z.enum(["Low", "Normal", "High", "Urgent"]),
   deadline: z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/, "Enter a valid date."),
-  service: z.string().min(1, "Select a service."),
-  owner: z.string(),
+  serviceId: z.string().min(1, "Select a service."),
+  ownerId: z.string(),
 });
 type Values = z.infer<typeof schema>;
 
-/** Edit status, priority, target date, service and compliance owner. Stage and CSR have their own controls. */
-export function EditCaseDialog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  const data = useData();
-  const dispatch = useAppDispatch();
-  const [formError, setFormError] = useState("");
-  const project = projectById(data, projectId);
-  const owners = data.users.filter((u) => u.role === "COMPLIANCE" && u.status === "Active");
-  const services = data.services.filter((s) => s.active || s.id === project?.service);
-  const statuses = project && !CASE_STATUSES.includes(project.status) ? [project.status, ...CASE_STATUSES] : CASE_STATUSES;
+/**
+ * Edit status, priority, target date, service and compliance owner. Stage and CSR have their own controls.
+ * `project` is the freshest copy the page has: its `version` goes with the save, and when someone else saved first the
+ * server says so and this form keeps what was typed while the page reloads.
+ */
+export function EditCaseDialog({ project, onClose }: { project: Project; onClose: () => void }) {
+  const run = useAction();
+  const [update, { isLoading }] = useUpdateCaseMutation();
+  const owners = useDirectoryQuery({ role: "COMPLIANCE" }).data ?? [];
+  const services = (useCaseServicesQuery().data ?? []).filter((s) => s.active || s.id === project.service);
+  const statuses = EDITABLE_CASE_STATUSES.includes(project.status) ? EDITABLE_CASE_STATUSES : [project.status, ...EDITABLE_CASE_STATUSES];
   const {
     register,
     handleSubmit,
-    formState: { errors, isValid, isSubmitting },
+    setError,
+    formState: { errors, isValid },
   } = useForm<Values>({
     resolver: zodResolver(schema),
     mode: "onChange",
     defaultValues: {
-      status: project?.status ?? "Active",
-      priority: project?.priority ?? "Normal",
-      deadline: project?.deadline ?? "",
-      service: project?.service ?? "llc",
-      owner: project?.owner ?? "",
+      status: project.status,
+      priority: project.priority,
+      deadline: project.deadline,
+      serviceId: project.service,
+      ownerId: project.owner ?? "",
     },
   });
 
-  const submit = handleSubmit((values) => {
-    const result = dispatch(saveCaseEdit(projectId, values));
-    if (result.ok) onClose();
-    else setFormError(result.error ?? "Could not save the case.");
+  const submit = handleSubmit(async (values) => {
+    // Only what changed goes to the server: it refuses a status the editor cannot set, even when it is the current one.
+    const changes: CaseChanges = { version: project.version };
+    if (values.status !== project.status) changes.status = CASE_STATUS.toKey(values.status);
+    if (values.priority !== project.priority) changes.priority = PRIORITY.toKey(values.priority);
+    if (values.deadline !== project.deadline) changes.deadline = values.deadline || null;
+    if (values.serviceId !== project.service) changes.serviceId = values.serviceId;
+    if (values.ownerId !== (project.owner ?? "")) changes.ownerId = values.ownerId || null;
+    const outcome = await run(update({ id: project.apiId, ...changes }), { success: "Case saved", setError, fields: ["status", "priority", "deadline", "serviceId", "ownerId"] });
+    if (outcome.ok) onClose();
   });
 
   return (
@@ -59,11 +69,11 @@ export function EditCaseDialog({ projectId, onClose }: { projectId: string; onCl
       open
       onOpenChange={(o) => !o && onClose()}
       title="Edit case details"
-      description={`${projectId} · ${project ? userName(data, project.client) : ""}. Stage changes are made from the stage control, not here.`}
+      description={`${project.id} · ${project.clientName}. Stage changes are made from the stage control, not here.`}
     >
       <form onSubmit={submit} noValidate className="flex flex-col gap-3.5">
         <FieldRow>
-          <Field label="Status">
+          <Field label="Status" error={errors.status?.message}>
             {(id) => (
               <Select id={id} {...register("status")}>
                 {statuses.map((s) => (
@@ -90,9 +100,9 @@ export function EditCaseDialog({ projectId, onClose }: { projectId: string; onCl
           <Field label="Target date" error={errors.deadline?.message}>
             {(id, describedBy) => <Input id={id} type="date" aria-describedby={describedBy} invalid={Boolean(errors.deadline)} {...register("deadline")} />}
           </Field>
-          <Field label="Service" error={errors.service?.message}>
+          <Field label="Service" error={errors.serviceId?.message}>
             {(id, describedBy) => (
-              <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.service)} {...register("service")}>
+              <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.serviceId)} {...register("serviceId")}>
                 {services.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -102,9 +112,9 @@ export function EditCaseDialog({ projectId, onClose }: { projectId: string; onCl
             )}
           </Field>
         </FieldRow>
-        <Field label="Compliance owner">
+        <Field label="Compliance owner" error={errors.ownerId?.message}>
           {(id) => (
-            <Select id={id} {...register("owner")}>
+            <Select id={id} {...register("ownerId")}>
               <option value="">Not assigned</option>
               {owners.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -115,15 +125,15 @@ export function EditCaseDialog({ projectId, onClose }: { projectId: string; onCl
           )}
         </Field>
         <span className="help">The CSR is changed with Reassign CSR so the reassignment rules and history apply.</span>
-        {formError ? (
+        {errors.root?.message ? (
           <Callout tone="warn" icon="alert" role="alert">
-            {formError}
+            {errors.root.message}
           </Callout>
         ) : null}
         <ModalFooter>
           <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={!isValid || isSubmitting}>
-            Save changes
+          <Button type="submit" variant="primary" disabled={!isValid || isLoading}>
+            {isLoading ? "Saving…" : "Save changes"}
           </Button>
         </ModalFooter>
       </form>

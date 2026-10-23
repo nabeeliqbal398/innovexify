@@ -59,7 +59,7 @@ export function ViewOutlet({ nav }: ViewProps) {
     case "reports":
       return <ReportsView />;
     case "announcements":
-      return <AnnouncementsView />;
+      return <AnnouncementsView nav={nav} />;
     case "tickets":
       return <TicketsView nav={nav} />;
     case "services":

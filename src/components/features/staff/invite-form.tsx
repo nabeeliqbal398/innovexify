@@ -4,15 +4,18 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useSearchParams } from "next/navigation";
 import { useId, useState } from "react";
 import { useForm } from "react-hook-form";
+import { toast } from "react-toastify";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Field, FieldRow, Input, Select, Textarea } from "@/components/ui/form";
 import { Chip } from "@/components/ui/primitives";
 import { ROLE_LABEL } from "@/constants/vocab";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
+import { useAction } from "@/hooks/useAction";
+import { useMe } from "@/hooks/useStore";
 import { can, type Permission } from "@/lib/permissions";
-import { inviteUser } from "@/store/actions/people";
+import { flash } from "@/lib/toast";
+import { useDirectoryQuery, useInviteClientMutation, useInviteUserMutation } from "@/store/api/people";
 import type { Role } from "@/types/domain";
 
 const INVITABLE: Role[] = ["MANAGER", "CSR", "COMPLIANCE", "CLIENT"];
@@ -29,26 +32,23 @@ const inviteSchema = z.object({
 type InviteValues = z.infer<typeof inviteSchema>;
 
 export function InviteForm() {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
+  const run = useAction();
   const roleLabelId = useId();
   const choices = INVITABLE.filter((r) => can(me, `invite${r}` as Permission));
   const requested = useSearchParams().get("invite");
-  const [picked, setPicked] = useState<Role>(
-    choices.find((r) => r === requested) ?? choices[choices.length - 1] ?? "CLIENT",
-  );
+  const [picked, setPicked] = useState<Role>(choices.find((r) => r === requested) ?? choices[choices.length - 1] ?? "CLIENT");
   const role = choices.includes(picked) ? picked : (choices[choices.length - 1] ?? "CLIENT");
   const isClient = role === "CLIENT";
   const isCsr = me.role === "CSR";
   const [formError, setFormError] = useState("");
+  const [inviteUser, userState] = useInviteUserMutation();
+  const [inviteClient, clientState] = useInviteClientMutation();
 
-  const activeClients = data.users.filter((u) => u.role === "CLIENT" && u.status !== "Removed");
+  const csrs = useDirectoryQuery({ role: "CSR" }, { skip: !isClient });
   const csrOptions = [
     isCsr ? { id: "me", label: `Assign to me (${me.name})` } : { id: "none", label: "Leave unassigned for now" },
-    ...data.users
-      .filter((u) => u.role === "CSR" && u.status === "Active" && (!isCsr || u.id !== me.id))
-      .map((c) => ({ id: c.id, label: `${c.name} · ${activeClients.filter((x) => x.csr === c.id).length} clients` })),
+    ...(csrs.data ?? []).filter((u) => !isCsr || u.id !== me.id).map((c) => ({ id: c.id, label: c.name })),
   ];
 
   const {
@@ -56,25 +56,44 @@ export function InviteForm() {
     handleSubmit,
     reset,
     setError,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<InviteValues>({
     resolver: zodResolver(inviteSchema),
-    defaultValues: { name: "", email: "", csr: csrOptions[0].id, note: "" },
+    defaultValues: { name: "", email: "", csr: isCsr ? "me" : "none", note: "" },
   });
+  const busy = userState.isLoading || clientState.isLoading;
 
-  const nextCase = `${data.company.casePrefix}-2026-${String(data.counters.nextCase).padStart(4, "0")}`;
-
-  const submit = handleSubmit((values) => {
+  const submit = handleSubmit(async (values) => {
     setFormError("");
-    const result = dispatch(inviteUser({ role, name: values.name, email: values.email, csr: values.csr, note: values.note }));
-    if (result.ok) {
-      reset({ name: "", email: "", csr: csrOptions[0].id, note: "" });
+    const fields = ["email", "name", "note", "csrId"];
+    const clear = () => reset({ name: "", email: "", csr: isCsr ? "me" : "none", note: "" });
+    if (isClient) {
+      const outcome = await run(
+        inviteClient({
+          email: values.email,
+          name: values.name.trim() || undefined,
+          csrId: values.csr === "none" ? undefined : values.csr,
+          note: values.note.trim() || undefined,
+        }),
+        { setError: (name, e) => setError(name === ("csrId" as never) ? "csr" : (name as keyof InviteValues), e), fields, quiet: true },
+      );
+      if (outcome.ok) {
+        const sent = outcome.data.invitationEmail;
+        if (sent === "sent") flash(`Client invitation sent to ${outcome.data.email}`);
+        else if (sent === "switched-off") flash(`Client created. The invitation email is switched off in Notifications & automation, so nothing was sent to ${outcome.data.email}.`);
+        else toast.warning(`Client created, but the invitation email could not be sent. Use "Resend invitation" below.`);
+        clear();
+      } else reportInline(outcome.error, setFormError);
       return;
     }
-    const message = result.error ?? "You can't send this invitation.";
-    if (/email/i.test(message)) setError("email", { message });
-    else if (/CSR/.test(message)) setError("csr", { message });
-    else setFormError(message);
+    const outcome = await run(inviteUser({ email: values.email, role, name: values.name.trim() || undefined, note: values.note.trim() || undefined }), {
+      setError,
+      fields,
+      quiet: true,
+      success: `${ROLE_LABEL[role]} invitation sent to ${values.email}`,
+    });
+    if (outcome.ok) clear();
+    else reportInline(outcome.error, setFormError);
   });
 
   return (
@@ -104,7 +123,7 @@ export function InviteForm() {
               </Chip>
             ))}
           </div>
-          <span className="help">{isCsr ? "Client is the only role CSRs can invite." : "Only roles you're allowed to invite are listed."}</span>
+          <span className="help">{isCsr ? "Client is the only role CSRs can invite." : "Only roles you are allowed to invite are listed."}</span>
         </div>
         <FieldRow>
           <Field label="Full name" error={errors.name?.message}>
@@ -112,14 +131,7 @@ export function InviteForm() {
           </Field>
           <Field label="Email" error={errors.email?.message}>
             {(id, describedBy) => (
-              <Input
-                id={id}
-                type="email"
-                aria-describedby={describedBy}
-                invalid={Boolean(errors.email)}
-                placeholder="name@company.com"
-                {...register("email")}
-              />
+              <Input id={id} type="email" aria-describedby={describedBy} invalid={Boolean(errors.email)} placeholder="name@company.com" {...register("email")} />
             )}
           </Field>
         </FieldRow>
@@ -127,8 +139,8 @@ export function InviteForm() {
           <FieldRow>
             <div className="flex flex-col gap-[5px]">
               <span className="flabel">Case ID</span>
-              <div className="mono flex h-[34px] items-center rounded-md border border-border-strong bg-background px-2.5">{nextCase}</div>
-              <span className="help">Demo counter. The server assigns and guarantees unique IDs in production.</span>
+              <div className="mono flex h-[34px] items-center rounded-md border border-border-strong bg-background px-2.5 text-muted-foreground">Assigned when you send</div>
+              <span className="help">The next free case ID and the first case are created with the client.</span>
             </div>
             <Field label="Assigned CSR" error={errors.csr?.message}>
               {(id, describedBy) => (
@@ -146,7 +158,7 @@ export function InviteForm() {
         <Field
           label={
             <>
-              Internal note <span className="font-normal text-muted-foreground">(optional, never shown to the invitee)</span>
+              Personal note <span className="font-normal text-muted-foreground">(optional, included in the invitation email)</span>
             </>
           }
           error={errors.note?.message}
@@ -159,12 +171,18 @@ export function InviteForm() {
           </span>
         ) : null}
         <div className="flex items-center gap-2">
-          <span className="help flex-1">Email delivery is simulated.</span>
-          <Button type="submit" variant="primary" disabled={isSubmitting}>
-            Send invitation
+          <span className="flex-1" />
+          <Button type="submit" variant="primary" disabled={busy}>
+            {busy ? "Sending…" : "Send invitation"}
           </Button>
         </div>
       </form>
     </section>
   );
+}
+
+/** A failure the form shows next to its button (a field error is already on its input). */
+function reportInline(error: { message: string; errorCode: string; fieldErrors: unknown[] }, set: (m: string) => void): void {
+  if (error.errorCode === "PERMISSION_DENIED") return; // the dialog already explained it
+  if (error.fieldErrors.length === 0) set(error.message);
 }

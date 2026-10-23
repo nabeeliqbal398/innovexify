@@ -2,46 +2,48 @@
 
 import { useState } from "react";
 
+import { QueryState } from "@/components/common/query-state";
 import { ServiceDrawer } from "@/components/features/services/service-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/form";
 import { Callout, PageHeader } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
 import { plural } from "@/lib/dates";
-import { useData } from "@/hooks/useStore";
+import { useCompanyQuery, useServicesQuery } from "@/store/api/system";
 
 /** Service catalog: what the company offers, what each service needs, and the stages it moves through. */
 export function ServicesView() {
-  const data = useData();
-  const [query, setQuery] = useState("");
+  const company = useCompanyQuery();
+  const query = useServicesQuery();
+  const [search, setSearch] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
-  const q = query.trim().toLowerCase();
-  const services = data.services.filter((s) => !q || `${s.name} ${s.category} ${s.desc}`.toLowerCase().includes(q));
+  const q = search.trim().toLowerCase();
+  const all = query.data ?? [];
+  const services = all.filter((s) => !q || `${s.name} ${s.category} ${s.desc}`.toLowerCase().includes(q));
+  const open = all.find((s) => s.id === openId) ?? null;
 
   return (
     <div className="stack-16">
       <PageHeader
         title="Service catalog"
-        description={`What ${data.company.name} offers, the information each service needs, and the stages it moves through.`}
+        description={`What ${company.data?.name ?? "the company"} offers, the information each service needs, and the stages it moves through.`}
         actions={
           <Input
             type="search"
             aria-label="Search services"
             placeholder="Search services"
             className="max-w-[280px]"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
           />
         }
       />
       <Callout tone="lock" icon="alert">
-        Fees and turnaround are internal, editable demo fields. They are not published prices, legal advice or guaranteed processing
-        times, and are intentionally left unset.
+        Fees and turnaround are internal fields. They are not published prices, legal advice or guaranteed processing times, and are left unset until someone fills them in.
       </Callout>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(260px,100%),1fr))] gap-3">
-        {services.map((s) => {
-          const active = data.projects.filter((p) => p.service === s.id && !(p.stageIdx >= 10 || p.status === "Completed")).length;
-          return (
+      <QueryState query={query} isEmpty={services.length === 0} empty={{ title: "No services match" }} rows={4}>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(260px,100%),1fr))] gap-3">
+          {services.map((s) => (
             <button
               key={s.id}
               type="button"
@@ -62,18 +64,13 @@ export function ServicesView() {
               <span className="help flex flex-wrap gap-2.5">
                 <span>{s.fee || "Fee not set"}</span>
                 <span>{s.turnaround || "Turnaround not set"}</span>
-                <span>{plural(active, "active case")}</span>
+                <span>{plural(s.activeCases ?? 0, "active case")}</span>
               </span>
             </button>
-          );
-        })}
-      </div>
-      {services.length === 0 ? (
-        <div className="card empty-s">
-          <strong>No services match</strong>
+          ))}
         </div>
-      ) : null}
-      <ServiceDrawer serviceId={openId} onClose={() => setOpenId(null)} />
+      </QueryState>
+      <ServiceDrawer service={open} onClose={() => setOpenId(null)} />
     </div>
   );
 }

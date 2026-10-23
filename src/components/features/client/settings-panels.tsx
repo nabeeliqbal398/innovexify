@@ -2,13 +2,16 @@
 
 import { useState } from "react";
 
+import { QueryState } from "@/components/common/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Callout, Card, CardHeader, Facts } from "@/components/ui/primitives";
 import { Icon } from "@/components/ui/icon";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
+import { useAction } from "@/hooks/useAction";
+import { useMe } from "@/hooks/useStore";
+import { PREF_API_KEY } from "@/lib/api-mappers";
 import { fmtAt } from "@/lib/dates";
-import { toggleNotificationPref } from "@/store/actions/people";
-import { userName } from "@/store/selectors";
+import { usePreferencesQuery, useUpdatePreferenceMutation } from "@/store/api/auth";
+import { useClientQuery } from "@/store/api/people";
 import type { NotificationPrefs } from "@/types/domain";
 
 const PREF_ROWS: ReadonlyArray<{ key: keyof NotificationPrefs; label: string }> = [
@@ -22,80 +25,96 @@ const PREF_ROWS: ReadonlyArray<{ key: keyof NotificationPrefs; label: string }> 
 const checkbox = "size-[18px] accent-primary";
 
 export function NotificationsPanel() {
-  const dispatch = useAppDispatch();
-  const me = useMe();
+  const run = useAction();
+  const prefs = usePreferencesQuery();
+  const [update, { isLoading }] = useUpdatePreferenceMutation();
+  const toggle = (key: keyof NotificationPrefs, channel: "email" | "app"): void => {
+    const current = prefs.data?.[key];
+    if (!current) return;
+    void run(
+      update({ category: PREF_API_KEY[key], ...(channel === "email" ? { email: !current.email } : { inApp: !current.app }) }),
+      { success: "Preference saved" },
+    );
+  };
   return (
     <Card>
-      <CardHeader title="Notification preferences" aside={<span className="help">Changes apply immediately in this demo</span>} />
-      <div className="tbl-wrap">
-        <table className="min-w-[420px] w-full border-collapse [&_td]:border-b [&_td]:border-muted [&_td]:px-3 [&_td]:py-2.5 [&_td:not(:first-child)]:text-center [&_th]:px-3 [&_th]:py-[9px] [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground [&_th:not(:first-child)]:text-center [&_th]:text-left [&_thead]:bg-background">
-          <thead>
-            <tr>
-              <th scope="col">Notify me about</th>
-              <th scope="col">Email</th>
-              <th scope="col">In-app</th>
-            </tr>
-          </thead>
-          <tbody>
-            {PREF_ROWS.map((p) => (
-              <tr key={p.key}>
-                <td className="text-sm">{p.label}</td>
-                <td>
-                  <input
-                    type="checkbox"
-                    className={checkbox}
-                    checked={Boolean(me.prefs?.[p.key].email)}
-                    onChange={() => dispatch(toggleNotificationPref(p.key, "email"))}
-                    aria-label={`Email for ${p.label}`}
-                  />
+      <CardHeader title="Notification preferences" aside={<span className="help">Saved as soon as you change a box</span>} />
+      <QueryState query={prefs} isEmpty={false} empty={{ title: "" }} rows={4}>
+        <div className="tbl-wrap">
+          <table className="min-w-[420px] w-full border-collapse [&_td]:border-b [&_td]:border-muted [&_td]:px-3 [&_td]:py-2.5 [&_td:not(:first-child)]:text-center [&_th]:px-3 [&_th]:py-[9px] [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground [&_th:not(:first-child)]:text-center [&_th]:text-left [&_thead]:bg-background">
+            <thead>
+              <tr>
+                <th scope="col">Notify me about</th>
+                <th scope="col">Email</th>
+                <th scope="col">In-app</th>
+              </tr>
+            </thead>
+            <tbody>
+              {PREF_ROWS.map((p) => (
+                <tr key={p.key}>
+                  <td className="text-sm">{p.label}</td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      className={checkbox}
+                      checked={Boolean(prefs.data?.[p.key].email)}
+                      disabled={isLoading}
+                      onChange={() => toggle(p.key, "email")}
+                      aria-label={`Email for ${p.label}`}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      className={checkbox}
+                      checked={Boolean(prefs.data?.[p.key].app)}
+                      disabled={isLoading}
+                      onChange={() => toggle(p.key, "app")}
+                      aria-label={`In-app for ${p.label}`}
+                    />
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td className="text-sm">
+                  Security notices <Badge tone="q">Always on</Badge>
                 </td>
                 <td>
-                  <input
-                    type="checkbox"
-                    className={checkbox}
-                    checked={Boolean(me.prefs?.[p.key].app)}
-                    onChange={() => dispatch(toggleNotificationPref(p.key, "app"))}
-                    aria-label={`In-app for ${p.label}`}
-                  />
+                  <input type="checkbox" className={checkbox} checked disabled readOnly aria-label="Email for security notices, always on" />
+                </td>
+                <td>
+                  <input type="checkbox" className={checkbox} checked disabled readOnly aria-label="In-app for security notices, always on" />
                 </td>
               </tr>
-            ))}
-            <tr>
-              <td className="text-sm">
-                Security notices <Badge tone="q">Always on</Badge>
-              </td>
-              <td>
-                <input type="checkbox" className={checkbox} checked disabled readOnly aria-label="Email for security notices, always on" />
-              </td>
-              <td>
-                <input type="checkbox" className={checkbox} checked disabled readOnly aria-label="In-app for security notices, always on" />
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p className="help px-3.5 py-2.5">No email is sent by this prototype; the email column records your preference only.</p>
+            </tbody>
+          </table>
+        </div>
+      </QueryState>
+      <p className="help px-3.5 py-2.5">Switching email off stops the email only: you still see the notification in the portal.</p>
     </Card>
   );
 }
 
 export function AccountPanel() {
-  const data = useData();
   const me = useMe();
+  const profile = useClientQuery(me.id);
+  const c = profile.data;
   return (
     <section className="card card-b">
       <span className="h3">Account information</span>
-      <Facts
-        items={[
-          { label: "Case ID", value: me.caseId, mono: true },
-          { label: "Login email", value: me.email },
-          { label: "Business", value: me.biz || "To be confirmed" },
-          { label: "Formation state", value: me.state || "To be confirmed" },
-          { label: "Your CSR", value: userName(data, me.csr) },
-          { label: "Account status", value: me.status },
-          { label: "Member since", value: me.joinedAt ? fmtAt(me.joinedAt) : "—" },
-        ]}
-      />
+      <QueryState query={profile} isEmpty={false} empty={{ title: "" }} rows={3}>
+        <Facts
+          items={[
+            { label: "Case ID", value: c?.caseId ?? me.caseId, mono: true },
+            { label: "Login email", value: me.email },
+            { label: "Business", value: c?.biz || "To be confirmed" },
+            { label: "Formation state", value: c?.state || "To be confirmed" },
+            { label: "Your CSR", value: c?.csrName ?? "Not assigned yet" },
+            { label: "Account status", value: me.status },
+            { label: "Member since", value: c?.joinedAt ? fmtAt(c.joinedAt) : "—" },
+          ]}
+        />
+      </QueryState>
       <Callout tone="info" icon="lock">
         Case ID and login email can&apos;t be changed here. To change your login email, message your team; staff verify and update it.
       </Callout>

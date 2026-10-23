@@ -8,3 +8,6 @@ next-env.d.ts
 coverage
 test-results
 playwright-report
+.next-e2e
+e2e/.storage
+e2e/.mail-outbox.jsonl

@@ -9,46 +9,60 @@ import { Button } from "@/components/ui/button";
 import { Modal, ModalFooter } from "@/components/ui/dialog";
 import { Field, FieldRow, Input, Select } from "@/components/ui/form";
 import { Callout } from "@/components/ui/primitives";
-import { PRIORITIES } from "@/constants/vocab";
-import { useAppDispatch, useData } from "@/hooks/useStore";
-import { dISO } from "@/lib/dates";
-import { createCase } from "@/store/actions/cases";
-import { projectOfClient } from "@/store/selectors";
-import { clientUsers } from "./case-data";
-
-const STATES = ["Wyoming", "Delaware", "New Mexico", "Florida", "Texas", "Nevada"] as const;
+import { FORMATION_STATES, PRIORITIES } from "@/constants/vocab";
+import { useAction } from "@/hooks/useAction";
+import { useDebounced } from "@/hooks/useDebounced";
+import { PRIORITY } from "@/lib/api-mappers";
+import { isDone } from "@/lib/api-mappers";
+import { useCreateCaseMutation, useCaseServicesQuery } from "@/store/api/cases";
+import { useClientsQuery } from "@/store/api/people";
 
 const schema = z.object({
-  client: z.string().min(1, "Select a client."),
-  service: z.string().min(1, "Select a service."),
-  state: z.string().min(1, "Select a state."),
+  clientId: z.string().min(1, "Select a client."),
+  serviceId: z.string().min(1, "Select a service."),
+  formationState: z.string().min(1, "Select a state."),
   priority: z.enum(["Low", "Normal", "High", "Urgent"]),
   deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a target date."),
-  biz: z.string().max(120, "Keep the business name under 120 characters."),
+  businessName: z.string().max(120, "Keep the business name under 120 characters."),
 });
 type Values = z.infer<typeof schema>;
+const FIELDS = ["clientId", "serviceId", "formationState", "priority", "deadline", "businessName"] as const;
 
-/** Opens a case for a client who doesn't have one yet. */
+const inDays = (n: number): string => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+
+/** Opens a case for a client who has no open case. The server refuses a second open case for the same client. */
 export function NewCaseDialog({ onClose }: { onClose: () => void }) {
-  const data = useData();
-  const dispatch = useAppDispatch();
-  const [formError, setFormError] = useState("");
-  const clients = clientUsers(data).filter((c) => !projectOfClient(data, c.id));
-  const services = data.services.filter((s) => s.active);
+  const run = useAction();
+  const [create, { isLoading }] = useCreateCaseMutation();
+  const [lookup, setLookup] = useState("");
+  const search = useDebounced(lookup.trim(), 300);
+  const clientsResult = useClientsQuery({ search, limit: 20, sort: "name", order: "asc" });
+  const clients = clientsResult.data?.items ?? [];
+  const services = (useCaseServicesQuery().data ?? []).filter((s) => s.active);
   const {
     register,
     handleSubmit,
-    formState: { errors, isValid, isSubmitting },
+    setError,
+    formState: { errors, isValid },
   } = useForm<Values>({
     resolver: zodResolver(schema),
     mode: "onChange",
-    defaultValues: { client: "", service: "llc", state: "Wyoming", priority: "Normal", deadline: dISO(30), biz: "" },
+    defaultValues: { clientId: "", serviceId: "llc", formationState: "Wyoming", priority: "Normal", deadline: inDays(30), businessName: "" },
   });
 
-  const submit = handleSubmit((values) => {
-    const result = dispatch(createCase(values));
-    if (result.ok) onClose();
-    else setFormError(result.error ?? "Could not create the case.");
+  const submit = handleSubmit(async (values) => {
+    const outcome = await run(
+      create({
+        clientId: values.clientId,
+        serviceId: values.serviceId,
+        priority: PRIORITY.toKey(values.priority),
+        deadline: values.deadline,
+        formationState: values.formationState,
+        businessName: values.businessName.trim() || undefined,
+      }),
+      { success: "Case created", setError, fields: FIELDS },
+    );
+    if (outcome.ok) onClose();
   });
 
   return (
@@ -57,25 +71,34 @@ export function NewCaseDialog({ onClose }: { onClose: () => void }) {
       wide
       onOpenChange={(o) => !o && onClose()}
       title="New case"
-      description="Opens a case for a client who doesn't have one yet. Stage and status are tracked separately."
+      description="Opens a case for a client who has no open case. Stage and status are tracked separately."
     >
       <form onSubmit={submit} noValidate className="flex flex-col gap-3.5">
         <FieldRow>
-          <Field label="Client" error={errors.client?.message}>
+          <div className="flex flex-col gap-2">
+            <Field label="Find a client">
+              {(id) => <Input id={id} type="search" placeholder="Name, email or case ID" value={lookup} onChange={(e) => setLookup(e.target.value)} />}
+            </Field>
+            <Field label="Client" error={errors.clientId?.message}>
+              {(id, describedBy) => (
+                <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.clientId)} {...register("clientId")}>
+                  <option value="">{clientsResult.isLoading ? "Loading…" : "Select a client"}</option>
+                  {clients.map((c) => {
+                    const hasOpen = c.currentCase ? !isDone(c.currentCase) : false;
+                    return (
+                      <option key={c.id} value={c.id} disabled={hasOpen}>
+                        {c.name} · {c.caseId}
+                        {hasOpen ? " (has an open case)" : ""}
+                      </option>
+                    );
+                  })}
+                </Select>
+              )}
+            </Field>
+          </div>
+          <Field label="Service" error={errors.serviceId?.message}>
             {(id, describedBy) => (
-              <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.client)} {...register("client")}>
-                <option value="">Select a client without a case</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} · {c.caseId}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Service" error={errors.service?.message}>
-            {(id, describedBy) => (
-              <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.service)} {...register("service")}>
+              <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.serviceId)} {...register("serviceId")}>
                 {services.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -85,16 +108,16 @@ export function NewCaseDialog({ onClose }: { onClose: () => void }) {
             )}
           </Field>
         </FieldRow>
-        {clients.length === 0 ? (
+        {clientsResult.data && clients.length > 0 && clients.every((c) => (c.currentCase ? !isDone(c.currentCase) : false)) ? (
           <Callout tone="lock" icon="lock">
-            Every client already has a case. Invite a client first from Staff &amp; Invitations.
+            Every client found already has an open case. Search for another client, or invite one from Staff &amp; Invitations.
           </Callout>
         ) : null}
         <FieldRow>
-          <Field label="Formation state" error={errors.state?.message}>
+          <Field label="Formation state" error={errors.formationState?.message}>
             {(id, describedBy) => (
-              <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.state)} {...register("state")}>
-                {STATES.map((s) => (
+              <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.formationState)} {...register("formationState")}>
+                {FORMATION_STATES.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>
@@ -117,18 +140,18 @@ export function NewCaseDialog({ onClose }: { onClose: () => void }) {
             {(id, describedBy) => <Input id={id} type="date" aria-describedby={describedBy} invalid={Boolean(errors.deadline)} {...register("deadline")} />}
           </Field>
         </FieldRow>
-        <Field label="Business name (optional)" error={errors.biz?.message}>
-          {(id, describedBy) => <Input id={id} placeholder="If known" aria-describedby={describedBy} invalid={Boolean(errors.biz)} {...register("biz")} />}
+        <Field label="Business name (optional)" error={errors.businessName?.message}>
+          {(id, describedBy) => <Input id={id} placeholder="If known" aria-describedby={describedBy} invalid={Boolean(errors.businessName)} {...register("businessName")} />}
         </Field>
-        {formError ? (
+        {errors.root?.message ? (
           <Callout tone="warn" icon="alert" role="alert">
-            {formError}
+            {errors.root.message}
           </Callout>
         ) : null}
         <ModalFooter>
           <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={!isValid || isSubmitting}>
-            Create case
+          <Button type="submit" variant="primary" disabled={!isValid || isLoading}>
+            {isLoading ? "Creating…" : "Create case"}
           </Button>
         </ModalFooter>
       </form>

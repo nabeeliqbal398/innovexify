@@ -6,13 +6,16 @@ import { Icon } from "@/components/ui/icon";
 import { NAV } from "@/constants/nav";
 import { ROLE_LABEL } from "@/constants/vocab";
 import { cn } from "@/lib/cn";
-import { useData, useMe } from "@/hooks/useStore";
+import { useMe } from "@/hooks/useStore";
+import { usePageVisible } from "@/hooks/usePageVisible";
+import { useNavCountsQuery } from "@/store/api/dashboard";
 import type { WorkspaceNav } from "@/hooks/useWorkspaceNav";
-import { navCount } from "@/components/features/workspace/nav-counts";
 
 export function SideNav({ nav }: { nav: WorkspaceNav }) {
   const me = useMe();
-  const data = useData();
+  const visible = usePageVisible();
+  // The numbers on the items come from the server and refresh every 30 seconds while the tab is visible.
+  const { data: counts } = useNavCountsQuery(undefined, { pollingInterval: visible ? 30_000 : 0 });
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const items = NAV[me.role];
   const groups = useMemo(() => {
@@ -60,7 +63,7 @@ export function SideNav({ nav }: { nav: WorkspaceNav }) {
             ) : null}
             {g.items.map((item) => {
               const on = item.view === activeView;
-              const count = navCount(item.view, data, me);
+              const count = counts?.[item.view as keyof typeof counts] ?? 0;
               return (
                 <button
                   key={item.view}

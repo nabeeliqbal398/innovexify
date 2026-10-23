@@ -2,24 +2,23 @@
 
 import { useState } from "react";
 
+import { EmailDialog, RemoveDialog } from "@/components/features/people/person-dialogs";
 import { InviteForm } from "@/components/features/staff/invite-form";
 import { PendingInvitations } from "@/components/features/staff/pending-invitations";
 import { StaffDirectory } from "@/components/features/staff/staff-directory";
 import { StaffDrawer } from "@/components/features/staff/staff-drawer";
 import { StaffWorkload } from "@/components/features/staff/staff-workload";
-import { pendingInvitations } from "@/components/features/staff/workload";
-import { EmailDialog, RemoveDialog } from "@/components/features/people/person-dialogs";
 import type { ViewProps } from "@/components/features/workspace/types";
-import { useData, useMe } from "@/hooks/useStore";
+import { useMe } from "@/hooks/useStore";
+import type { User } from "@/types/domain";
 
 const JUMP_CLASS =
   "inline-flex h-7 items-center rounded-full border border-border bg-surface px-2.5 text-xs font-medium text-neutral no-underline hover:bg-muted";
 
 export function StaffView({ nav }: ViewProps) {
   const me = useMe();
-  const data = useData();
-  const [emailFor, setEmailFor] = useState<string | null>(null);
-  const [removeFor, setRemoveFor] = useState<string | null>(null);
+  const [emailFor, setEmailFor] = useState<User | null>(null);
+  const [removeFor, setRemoveFor] = useState<User | null>(null);
 
   const showStaff = me.role === "ADMIN" || me.role === "MANAGER";
   const isCsr = me.role === "CSR";
@@ -51,7 +50,7 @@ export function StaffView({ nav }: ViewProps) {
               Invite
             </a>
             <a className={JUMP_CLASS} href="#sec-pend">
-              Pending ({pendingInvitations(data, me).length})
+              Pending
             </a>
           </nav>
         ) : null}
@@ -73,8 +72,8 @@ export function StaffView({ nav }: ViewProps) {
           onOpenClient={(id) => nav.go("clients", { query: { client: id } })}
         />
       ) : null}
-      <EmailDialog userId={emailFor} onClose={() => setEmailFor(null)} />
-      <RemoveDialog userId={removeFor} onClose={() => setRemoveFor(null)} />
+      <EmailDialog user={emailFor} onClose={() => setEmailFor(null)} />
+      <RemoveDialog user={removeFor} onClose={() => setRemoveFor(null)} />
     </div>
   );
 }

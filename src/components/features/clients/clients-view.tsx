@@ -2,27 +2,27 @@
 
 import { useState } from "react";
 
-import { caseViewFor, clientUsers } from "@/components/features/cases/case-data";
+import { Pager } from "@/components/common/pager";
+import { QueryState } from "@/components/common/query-state";
+import { caseViewFor } from "@/components/features/cases/case-data";
 import { EmailDialog, ReassignDialog, RemoveDialog } from "@/components/features/people/person-dialogs";
+import { AddFollowupDialog } from "@/components/features/followups/followup-dialogs";
+import { AccountActions } from "@/components/features/staff/account-actions";
 import type { ViewProps } from "@/components/features/workspace/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/form";
 import { Icon } from "@/components/ui/icon";
-import { Card, Chip, EmptyState, PageHeader, Progress } from "@/components/ui/primitives";
+import { Card, Chip, PageHeader, Progress } from "@/components/ui/primitives";
 import { STAGES } from "@/constants/vocab";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
-import { ago, dISO, fmtDay } from "@/lib/dates";
+import { useAction } from "@/hooks/useAction";
+import { useDebounced } from "@/hooks/useDebounced";
+import { useMe } from "@/hooks/useStore";
+import { ago, fmtDay } from "@/lib/dates";
 import { can } from "@/lib/permissions";
-import { openCaseCheck } from "@/store/actions/cases";
-import { check } from "@/store/actions/core";
-import { openConversation } from "@/store/actions/comms";
-import { assignCsr, requestEmailChange, requestReassign, requestRemove, toggleSuspend } from "@/store/actions/people";
-import { projectOfClient, userName } from "@/store/selectors";
+import { useChangeCsrMutation, useClientQuery, useClientsQuery, useDirectoryQuery, type ListClientsParams } from "@/store/api/people";
 import type { User } from "@/types/domain";
-import { lastContact, nextFollowup, onboarding } from "./client-data";
 import { ClientProfile } from "./client-profile";
-import { ReminderDialog } from "./followup-dialogs";
 
 type ClientFilter = "" | "due" | "invited" | "waiting";
 const FILTERS: ReadonlyArray<{ value: ClientFilter; label: string }> = [
@@ -33,52 +33,41 @@ const FILTERS: ReadonlyArray<{ value: ClientFilter; label: string }> = [
 ];
 
 const STATUS_TONE = { Active: "ok", Invited: "brand" } as const;
+const PAGE_SIZE = 10;
+const utcToday = (): string => new Date().toISOString().slice(0, 10);
 
 export function ClientsView({ nav }: ViewProps) {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
+  const run = useAction();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<ClientFilter>("");
+  const [page, setPage] = useState(1);
   const [picks, setPicks] = useState<Record<string, string>>({});
-  const [reassignId, setReassignId] = useState<string | null>(null);
-  const [emailId, setEmailId] = useState<string | null>(null);
-  const [removeId, setRemoveId] = useState<string | null>(null);
+  const [reassign, setReassign] = useState<User | null>(null);
+  const [emailFor, setEmailFor] = useState<User | null>(null);
+  const [removeFor, setRemoveFor] = useState<User | null>(null);
   const [reminder, setReminder] = useState(false);
   const [assignError, setAssignError] = useState<Record<string, string>>({});
+  const search = useDebounced(q.trim(), 300);
 
   const isCsr = me.role === "CSR";
   const staffTarget = me.role === "ADMIN" || me.role === "MANAGER";
-  const todayIso = dISO(0);
-  const query = q.trim().toLowerCase();
+  const todayIso = utcToday();
 
-  const visible = clientUsers(data).filter((c) => can(me, "viewClient", c));
-  const unassigned = visible.filter((c) => !c.csr);
-  const activeCsrs = data.users.filter((u) => u.role === "CSR" && u.status === "Active");
+  const list = useClientsQuery({ search, ...(filter ? { filter } : {}), page, limit: PAGE_SIZE, sort: "name", order: "asc" } satisfies ListClientsParams);
+  const rows = list.data?.items ?? [];
+  const meta = list.data?.meta;
+  const needsCsr = useClientsQuery({ csrId: "none", limit: 20, sort: "createdAt", order: "asc" }, { skip: me.role === "COMPLIANCE" });
+  const unassigned = needsCsr.data?.items ?? [];
+  const csrs = useDirectoryQuery({ role: "CSR" });
+  const [changeCsr, assigning] = useChangeCsrMutation();
   const csrOptions = [
     ...(isCsr ? [{ id: "me", label: "Assign to me" }] : []),
-    ...activeCsrs.filter((c) => !isCsr || c.id !== me.id).map((c) => ({ id: c.id, label: c.name })),
+    ...(csrs.data ?? []).filter((c) => !isCsr || c.id !== me.id).map((c) => ({ id: c.id, label: c.name })),
   ];
 
-  const waiting = (c: User) => {
-    const project = projectOfClient(data, c.id);
-    return data.docs.some((d) => d.client === c.id && ["requested", "rejected", "info"].includes(d.status)) || project?.status === "Awaiting Client";
-  };
-  const rows = visible
-    .filter((c) => !query || `${c.name} ${c.email} ${c.caseId}`.toLowerCase().includes(query))
-    .filter((c) => !isCsr || c.csr === me.id)
-    .filter((c) => {
-      if (filter === "due") {
-        const nf = nextFollowup(data, c);
-        return Boolean(nf) && (nf?.due ?? "") <= todayIso;
-      }
-      if (filter === "invited") return c.status === "Invited";
-      if (filter === "waiting") return waiting(c);
-      return true;
-    });
-
   const openId = nav.param("client");
-  const detail = visible.find((c) => c.id === openId);
+  const detail = useClientQuery(openId, { skip: !openId });
 
   const title = isCsr ? "My clients" : me.role === "COMPLIANCE" ? "Clients / cases" : "Clients";
   const sub = isCsr
@@ -87,19 +76,11 @@ export function ClientsView({ nav }: ViewProps) {
       ? "Case records for compliance work. Assignments are managed by Admin and Manager."
       : "Accounts, case IDs and CSR assignments.";
 
-  const openCase = (projectId: string) => {
-    if (dispatch(openCaseCheck(projectId))) nav.go(caseViewFor(me.role), { id: projectId });
-  };
-  const message = (id: string) => {
-    if (dispatch(openConversation(id))) nav.go("messages", { query: { c: id } });
-  };
-  const assign = (client: User) => {
+  const assign = async (client: User) => {
     const pick = picks[client.id] ?? csrOptions[0]?.id ?? "";
-    const result = dispatch(assignCsr(client.id, pick));
-    setAssignError((e) => ({ ...e, [client.id]: result.ok ? "" : (result.error ?? "") }));
-  };
-  const addFollowup = () => {
-    if (dispatch(check("followups", undefined, "Open add follow-up", ""))) setReminder(true);
+    setAssignError((e) => ({ ...e, [client.id]: "" }));
+    const outcome = await run(changeCsr({ id: client.id, csrId: pick }), { success: `${client.name} assigned`, quiet: true });
+    if (!outcome.ok && outcome.error.errorCode !== "PERMISSION_DENIED") setAssignError((e) => ({ ...e, [client.id]: outcome.error.message }));
   };
 
   return (
@@ -110,7 +91,7 @@ export function ClientsView({ nav }: ViewProps) {
         actions={
           <>
             {isCsr ? (
-              <Button onClick={addFollowup}>
+              <Button onClick={() => setReminder(true)}>
                 <Icon name="clock" small />
                 Add follow-up
               </Button>
@@ -131,11 +112,21 @@ export function ClientsView({ nav }: ViewProps) {
           placeholder="Search name, email or case ID"
           className="max-w-[320px] flex-[1_1_220px]"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setPage(1);
+          }}
         />
         <div role="group" aria-label="Client filters" className="flex flex-wrap gap-1">
           {FILTERS.map((f) => (
-            <Chip key={f.value} active={filter === f.value} onClick={() => setFilter(f.value)}>
+            <Chip
+              key={f.value}
+              active={filter === f.value}
+              onClick={() => {
+                setFilter(f.value);
+                setPage(1);
+              }}
+            >
               {f.label}
             </Chip>
           ))}
@@ -146,11 +137,11 @@ export function ClientsView({ nav }: ViewProps) {
         <Card className="border-[#FDE68A] dark:border-warning/40">
           <div className="flex flex-wrap items-center gap-2 px-3.5 py-3">
             <span className="h3">Needs a CSR</span>
-            <Badge tone="warn">{unassigned.length}</Badge>
+            <Badge tone="warn">{needsCsr.data?.meta.total ?? unassigned.length}</Badge>
             <span className="help">New clients without an assigned CSR.</span>
           </div>
           {unassigned.map((c) => {
-            const allowed = can(me, "assignNewClient", c);
+            const allowed = can(me, "assignNewClient", { csr: null });
             return (
               <div key={c.id} className="row">
                 <div className="flex-[1_1_200px]">
@@ -178,12 +169,12 @@ export function ClientsView({ nav }: ViewProps) {
                         </option>
                       ))}
                     </Select>
-                    <Button size="sm" variant="primary" onClick={() => assign(c)}>
+                    <Button size="sm" variant="primary" disabled={assigning.isLoading} onClick={() => void assign(c)}>
                       Assign
                     </Button>
                   </>
                 ) : (
-                  <Button size="sm" variant="locked" onClick={() => assign(c)}>
+                  <Button size="sm" variant="locked" onClick={() => void assign(c)}>
                     <Icon name="lock" small />
                     Assign CSR
                   </Button>
@@ -194,145 +185,138 @@ export function ClientsView({ nav }: ViewProps) {
         </Card>
       ) : null}
 
-      {detail ? (
+      {openId && detail.data ? (
         <ClientProfile
-          key={detail.id}
-          client={detail}
+          key={detail.data.id}
+          client={detail.data}
           onClose={() => nav.setParams({ client: undefined })}
-          onOpenCase={openCase}
+          onOpenCase={(caseId) => nav.go(caseViewFor(me.role), { id: caseId })}
         />
+      ) : null}
+      {openId && detail.isError ? (
+        <Card>
+          <QueryState query={detail} isEmpty={false} empty={{ title: "" }}>
+            {null}
+          </QueryState>
+        </Card>
       ) : null}
 
       <Card>
-        <div className="tbl-wrap">
-          <table className="data stack min-w-[1100px]">
-            <thead>
-              <tr>
-                <th scope="col">Client</th>
-                <th scope="col">Case ID</th>
-                <th scope="col">Status</th>
-                {!isCsr ? <th scope="col">Assigned CSR</th> : null}
-                <th scope="col">Case</th>
-                <th scope="col">Last contact</th>
-                <th scope="col">Next follow-up</th>
-                <th scope="col">Onboarding</th>
-                <th scope="col">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => {
-                const project = projectOfClient(data, c.id);
-                const ob = onboarding(data, c);
-                const lc = lastContact(data, c);
-                const nf = nextFollowup(data, c);
-                const open = openId === c.id;
-                const canReassign = can(me, "reassignClient", c);
-                const canRemove = can(me, "removeUser", c);
-                return (
-                  <tr key={c.id} className={open ? "is-active" : undefined}>
-                    <td className="tl-left">
-                      <div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="px-1 font-semibold"
-                          aria-expanded={open}
-                          title="Show client profile"
-                          onClick={() => nav.setParams({ client: open ? undefined : c.id })}
-                        >
-                          {c.name}
-                        </Button>
-                        <div className="help pl-1">{c.email}</div>
-                        <div className="help pl-1">{c.phone || "No phone on file"}</div>
-                      </div>
-                    </td>
-                    <td data-label="Case ID" className="mono whitespace-nowrap text-sm">
-                      {c.caseId}
-                    </td>
-                    <td data-label="Status">
-                      <Badge tone={STATUS_TONE[c.status as keyof typeof STATUS_TONE] ?? "err"}>{c.status}</Badge>
-                    </td>
-                    {!isCsr ? (
-                      <td data-label="Assigned CSR" className="whitespace-nowrap">
-                        {c.csr ? userName(data, c.csr) : "Unassigned"}
+        <QueryState query={list} isEmpty={rows.length === 0} empty={{ title: "No clients match", text: "Clear the search or choose another filter." }} rows={6}>
+          <div className="tbl-wrap">
+            <table className="data stack min-w-[1100px]">
+              <thead>
+                <tr>
+                  <th scope="col">Client</th>
+                  <th scope="col">Case ID</th>
+                  <th scope="col">Status</th>
+                  {!isCsr ? <th scope="col">Assigned CSR</th> : null}
+                  <th scope="col">Case</th>
+                  <th scope="col">Last contact</th>
+                  <th scope="col">Next follow-up</th>
+                  <th scope="col">Onboarding</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((c) => {
+                  const project = c.currentCase;
+                  const ob = c.onboarding ?? { done: 0, total: 5 };
+                  const nf = c.nextFollowUp;
+                  const open = openId === c.id;
+                  const canReassign = can(me, "reassignClient", c);
+                  return (
+                    <tr key={c.id} className={open ? "is-active" : undefined}>
+                      <td className="tl-left">
+                        <div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="px-1 font-semibold"
+                            aria-expanded={open}
+                            title="Show client profile"
+                            onClick={() => nav.setParams({ client: open ? undefined : c.id })}
+                          >
+                            {c.name}
+                          </Button>
+                          <div className="help pl-1">{c.email}</div>
+                          <div className="help pl-1">{c.phone || "No phone on file"}</div>
+                        </div>
                       </td>
-                    ) : null}
-                    <td data-label="Case" className="min-w-[190px] text-sm">
-                      <div>{project ? `${STAGES[project.stageIdx]} · ${project.id}` : "No project yet"}</div>
-                      <div className="help">{project ? (project.stageIdx < 10 ? `Next: ${STAGES[project.stageIdx + 1]}` : "Completed") : "No case yet"}</div>
-                    </td>
-                    <td data-label="Last contact" className="help whitespace-nowrap">
-                      {lc ? ago(lc) : "No contact yet"}
-                    </td>
-                    <td
-                      data-label="Next follow-up"
-                      className={`min-w-[120px] text-sm ${nf && nf.due <= todayIso ? "font-semibold text-danger-hover" : ""}`}
-                    >
-                      {nf ? `${fmtDay(nf.due)} · ${nf.type}` : "None scheduled"}
-                    </td>
-                    <td data-label="Onboarding">
-                      <div className="flex min-w-[90px] items-center gap-1.5" title="Onboarding steps completed">
-                        <Progress value={ob.pct} label={`Onboarding ${ob.label}`} className="flex-1" />
-                        <span className="mono help">{ob.label}</span>
-                      </div>
-                    </td>
-                    <td data-label="Actions">
-                      <div className="flex flex-nowrap gap-1">
-                        {project ? (
-                          <Button size="sm" onClick={() => openCase(project.id)}>
-                            Case
-                          </Button>
-                        ) : null}
-                        {can(me, "conversation", c) ? (
-                          <Button size="sm" onClick={() => message(c.id)}>
-                            Message
-                          </Button>
-                        ) : null}
-                        {c.csr ? (
-                          <Button
-                            size="sm"
-                            variant={canReassign ? "default" : "locked"}
-                            onClick={() => dispatch(requestReassign(c.id)) && setReassignId(c.id)}
-                          >
-                            {canReassign ? null : <Icon name="lock" small />}
-                            Reassign CSR
-                          </Button>
-                        ) : null}
-                        {staffTarget && can(me, "updateEmail", c) ? (
-                          <Button size="sm" onClick={() => dispatch(requestEmailChange(c.id)) && setEmailId(c.id)}>
-                            Edit email
-                          </Button>
-                        ) : null}
-                        {staffTarget && can(me, "suspendUser", c) ? (
-                          <Button size="sm" onClick={() => dispatch(toggleSuspend(c.id))}>
-                            {c.status === "Suspended" ? "Reactivate" : "Suspend"}
-                          </Button>
-                        ) : null}
-                        {staffTarget ? (
-                          <Button
-                            size="sm"
-                            variant={canRemove ? "bad" : "locked"}
-                            onClick={() => dispatch(requestRemove(c.id)) && setRemoveId(c.id)}
-                          >
-                            {canRemove ? null : <Icon name="lock" small />}
-                            Remove
-                          </Button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        {rows.length === 0 ? <EmptyState title="No clients match" text="Clear the search or choose another filter." /> : null}
+                      <td data-label="Case ID" className="mono whitespace-nowrap text-sm">
+                        {c.caseId}
+                      </td>
+                      <td data-label="Status">
+                        <Badge tone={STATUS_TONE[c.status as keyof typeof STATUS_TONE] ?? "err"}>{c.status}</Badge>
+                      </td>
+                      {!isCsr ? (
+                        <td data-label="Assigned CSR" className="whitespace-nowrap">
+                          {c.csrName ?? "Unassigned"}
+                        </td>
+                      ) : null}
+                      <td data-label="Case" className="min-w-[190px] text-sm">
+                        <div>{project ? `${STAGES[project.stageIdx]} · ${project.display}` : "No project yet"}</div>
+                        <div className="help">{project ? (project.stageIdx < 10 ? `Next: ${STAGES[project.stageIdx + 1]}` : "Completed") : "No case yet"}</div>
+                      </td>
+                      <td data-label="Last contact" className="help whitespace-nowrap">
+                        {c.lastContactAt ? ago(c.lastContactAt) : "No contact yet"}
+                      </td>
+                      <td data-label="Next follow-up" className={`min-w-[120px] text-sm ${nf && nf.due <= todayIso ? "font-semibold text-danger-hover" : ""}`}>
+                        {nf ? `${fmtDay(nf.due)} · ${nf.type}` : "None scheduled"}
+                      </td>
+                      <td data-label="Onboarding">
+                        <div className="flex min-w-[90px] items-center gap-1.5" title="Onboarding steps completed">
+                          <Progress value={Math.round((ob.done / Math.max(1, ob.total)) * 100)} label={`Onboarding ${ob.done}/${ob.total}`} className="flex-1" />
+                          <span className="mono help">
+                            {ob.done}/{ob.total}
+                          </span>
+                        </div>
+                      </td>
+                      <td data-label="Actions">
+                        <div className="flex flex-wrap gap-1">
+                          {project ? (
+                            <Button size="sm" onClick={() => nav.go(caseViewFor(me.role), { id: project.id })}>
+                              Case
+                            </Button>
+                          ) : null}
+                          {can(me, "conversation", { id: c.id, csr: c.csr }) ? (
+                            <Button size="sm" onClick={() => nav.go("messages", { query: { c: c.id } })}>
+                              Message
+                            </Button>
+                          ) : null}
+                          {c.csr && staffTarget ? (
+                            <Button size="sm" variant={canReassign ? "default" : "locked"} onClick={() => setReassign(c)}>
+                              {canReassign ? null : <Icon name="lock" small />}
+                              Reassign CSR
+                            </Button>
+                          ) : null}
+                          {staffTarget ? <AccountActions user={c} onEmail={setEmailFor} onRemove={setRemoveFor} /> : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </QueryState>
+        {meta ? (
+          <Pager
+            page={meta.page - 1}
+            pageCount={meta.totalPages}
+            total={meta.total}
+            pageSize={PAGE_SIZE}
+            noun="clients"
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => p + 1)}
+          />
+        ) : null}
       </Card>
 
-      <ReassignDialog userId={reassignId} onClose={() => setReassignId(null)} />
-      <EmailDialog userId={emailId} onClose={() => setEmailId(null)} />
-      <RemoveDialog userId={removeId} onClose={() => setRemoveId(null)} />
-      {reminder ? <ReminderDialog clientId="" onClose={() => setReminder(false)} /> : null}
+      <ReassignDialog user={reassign} onClose={() => setReassign(null)} />
+      <EmailDialog user={emailFor} onClose={() => setEmailFor(null)} />
+      <RemoveDialog user={removeFor} onClose={() => setRemoveFor(null)} />
+      {reminder ? <AddFollowupDialog onClose={() => setReminder(false)} /> : null}
     </div>
   );
 }

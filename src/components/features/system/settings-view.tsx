@@ -1,8 +1,7 @@
 "use client";
 
 import { PageHeader, Tabs } from "@/components/ui/primitives";
-import { useAppDispatch, useMe } from "@/hooks/useStore";
-import { guard } from "@/store/actions/core";
+import { useMe } from "@/hooks/useStore";
 import type { Role } from "@/types/domain";
 import type { ViewProps } from "@/components/features/workspace/types";
 
@@ -34,7 +33,6 @@ const COPY: Partial<Record<Role, { title: string; sub: string }>> = {
 
 export function SettingsView(props: ViewProps) {
   const { nav } = props;
-  const dispatch = useAppDispatch();
   const me = useMe();
   const tabs = TABS[me.role] ?? PROFILE_ONLY;
   const param = nav.param("tab");
@@ -44,15 +42,10 @@ export function SettingsView(props: ViewProps) {
     sub: "Your own profile. Company settings are limited to Admin and Manager.",
   };
 
-  const pick = (next: SettingsTab) => {
-    if (next === "audit" && !dispatch(guard("auditLog", undefined, "Opened audit log", "", { silent: true }))) return;
-    nav.setParams({ tab: next });
-  };
-
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title={copy.title} description={copy.sub} />
-      <Tabs label="Settings sections" options={tabs} value={tab} onChange={pick} />
+      <Tabs label="Settings sections" options={tabs} value={tab} onChange={(next) => nav.setParams({ tab: next })} />
       {tab === "branding" ? <BrandingForm /> : null}
       {tab === "defaults" ? <DefaultsForm /> : null}
       {tab === "audit" ? <SettingsAudit {...props} /> : null}

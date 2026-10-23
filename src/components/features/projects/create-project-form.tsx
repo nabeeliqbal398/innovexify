@@ -4,38 +4,41 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { ClientChooser } from "@/components/features/followups/followup-dialogs";
 import { Button } from "@/components/ui/button";
 import { Field, FieldRow, Input, Select } from "@/components/ui/form";
 import { FORMATION_STATES } from "@/constants/vocab";
-import { useAppDispatch, useData } from "@/hooks/useStore";
-import { createFormationProject } from "@/store/actions/cases";
-import { projectOfClient } from "@/store/selectors";
+import { useAction } from "@/hooks/useAction";
+import { useCreateCaseMutation } from "@/store/api/cases";
 
 const schema = z.object({
-  client: z.string().min(1, "Select a client."),
-  state: z.string().min(1),
-  biz: z.string().max(120, "Keep the business name under 120 characters."),
+  clientId: z.string().min(1, "Select a client."),
+  formationState: z.string().min(1),
+  businessName: z.string().max(120, "Keep the business name under 120 characters."),
 });
 type Values = z.infer<typeof schema>;
 
-const DEFAULTS: Values = { client: "", state: FORMATION_STATES[0], biz: "" };
+const DEFAULTS: Values = { clientId: "", formationState: FORMATION_STATES[0], businessName: "" };
+const inDays = (n: number): string => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 
+/** A quick LLC formation case for a client with no open case (the full form is New case in Case management). */
 export function CreateProjectForm() {
-  const data = useData();
-  const dispatch = useAppDispatch();
-  const clients = data.users.filter((u) => u.role === "CLIENT" && u.status !== "Removed" && !projectOfClient(data, u.id));
+  const run = useAction();
+  const [create, { isLoading }] = useCreateCaseMutation();
   const {
     register,
     handleSubmit,
     reset,
     setError,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<Values>({ resolver: zodResolver(schema), defaultValues: DEFAULTS });
 
-  const submit = handleSubmit((values) => {
-    const result = dispatch(createFormationProject(values));
-    if (result.ok) reset(DEFAULTS);
-    else setError("client", { message: result.error });
+  const submit = handleSubmit(async (values) => {
+    const outcome = await run(
+      create({ clientId: values.clientId, serviceId: "llc", deadline: inDays(30), formationState: values.formationState, businessName: values.businessName.trim() || undefined }),
+      { success: "Project created", setError, fields: ["clientId", "formationState", "businessName"] },
+    );
+    if (outcome.ok) reset(DEFAULTS);
   });
 
   return (
@@ -43,32 +46,21 @@ export function CreateProjectForm() {
       <span className="h3">Create formation project</span>
       <form onSubmit={submit} noValidate>
         <FieldRow>
-          <Field label="Client" error={errors.client?.message}>
-            {(id, describedBy) => (
-              <Select id={id} aria-describedby={describedBy} invalid={Boolean(errors.client)} {...register("client")}>
-                <option value="">Select a client without a project</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} · {c.caseId}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
+          <ClientChooser register={register("clientId")} error={errors.clientId?.message} />
           <Field label="State of formation">
             {(id) => (
-              <Select id={id} {...register("state")}>
+              <Select id={id} {...register("formationState")}>
                 {FORMATION_STATES.map((s) => (
                   <option key={s}>{s}</option>
                 ))}
               </Select>
             )}
           </Field>
-          <Field label="Business name" error={errors.biz?.message}>
-            {(id, describedBy) => <Input id={id} aria-describedby={describedBy} invalid={Boolean(errors.biz)} placeholder="If known" {...register("biz")} />}
+          <Field label="Business name" error={errors.businessName?.message}>
+            {(id, describedBy) => <Input id={id} aria-describedby={describedBy} invalid={Boolean(errors.businessName)} placeholder="If known" {...register("businessName")} />}
           </Field>
-          <Button type="submit" variant="primary" className="!min-w-0 !flex-none" disabled={isSubmitting}>
-            Create project
+          <Button type="submit" variant="primary" className="!min-w-0 !flex-none" disabled={isLoading}>
+            {isLoading ? "Creating…" : "Create project"}
           </Button>
         </FieldRow>
       </form>

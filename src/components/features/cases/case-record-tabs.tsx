@@ -3,17 +3,17 @@
 import { useState } from "react";
 
 import { MessageBubble } from "@/components/common/message-bubble";
+import { QueryState } from "@/components/common/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Callout, Card, EmptyState } from "@/components/ui/primitives";
+import { Callout, Card } from "@/components/ui/primitives";
 import { DOC_STATUS, FILING_TONE, ROLE_LABEL } from "@/constants/vocab";
-import { useAppDispatch, useData, useMe } from "@/hooks/useStore";
+import { useMe } from "@/hooks/useStore";
 import type { WorkspaceNav } from "@/hooks/useWorkspaceNav";
-import { ago, fmtDay } from "@/lib/dates";
+import { ago, fmtAt, fmtDay } from "@/lib/dates";
+import { ROLES } from "@/lib/api-mappers";
 import { can } from "@/lib/permissions";
-import { openFilingEditor } from "@/store/actions/cases";
-import { openConversation, openFile } from "@/store/actions/comms";
-import { userById, userName } from "@/store/selectors";
+import { useCaseDocumentsQuery, useCaseFilingsQuery, useCaseMessagesQuery } from "@/store/api/cases";
 import type { Project, User } from "@/types/domain";
 import { CaseFilingDialog } from "./case-filing-dialog";
 import { DocumentPreviewDialog } from "./document-preview-dialog";
@@ -25,12 +25,11 @@ interface TabProps {
 }
 
 export function DocumentsTab({ client, nav }: TabProps) {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
-  const [preview, setPreview] = useState<number | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const canFiles = can(me, "docsAccess", { client: client.id });
-  const docs = data.docs.filter((d) => d.client === client.id);
+  const result = useCaseDocumentsQuery(client.id);
+  const docs = result.data ?? [];
 
   return (
     <Card>
@@ -41,27 +40,25 @@ export function DocumentsTab({ client, nav }: TabProps) {
           </Callout>
         </div>
       ) : null}
-      {docs.map((d) => {
-        const last = d.history.slice(-1)[0];
-        const meta = last ? `Updated ${ago(last.at)}${canFiles && last.by ? ` by ${userName(data, last.by)}` : ""}` : "";
-        return (
+      <QueryState query={result} isEmpty={docs.length === 0} empty={{ title: "No documents yet" }} rows={3}>
+        {docs.map((d) => (
           <div key={d.id} className="row">
             <div className="min-w-0 flex-[1_1_220px]">
               <div className="font-medium">{d.name}</div>
               <div className="help">
-                {d.type || "Other"} · {meta}
+                {d.type || "Other"} · Updated {ago(d.updatedAt)}
+                {canFiles && d.updatedByName ? ` by ${d.updatedByName}` : ""}
               </div>
             </div>
             <Badge tone={DOC_STATUS[d.status].tone}>{DOC_STATUS[d.status].label}</Badge>
-            {canFiles && d.file ? (
-              <Button size="sm" onClick={() => dispatch(openFile(d.id, "Preview")) && setPreview(d.id)}>
+            {canFiles && d.hasFile ? (
+              <Button size="sm" onClick={() => setPreview(d.id)}>
                 Preview
               </Button>
             ) : null}
           </div>
-        );
-      })}
-      {docs.length === 0 ? <EmptyState title="No documents yet" /> : null}
+        ))}
+      </QueryState>
       {can(me, "docsManage") ? (
         <div className="row">
           <Button size="sm" variant="primary" onClick={() => nav.go(me.role === "COMPLIANCE" ? "requests" : "documents", { query: { client: client.id } })}>
@@ -75,15 +72,11 @@ export function DocumentsTab({ client, nav }: TabProps) {
 }
 
 export function FilingsTab({ project }: TabProps) {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
   const [editing, setEditing] = useState<string | null>(null);
   const canFile = can(me, "filingTracker");
-  const filings = data.filings.filter((f) => f.project === project.id);
-  const edit = (id: string) => {
-    if (dispatch(openFilingEditor())) setEditing(id);
-  };
+  const result = useCaseFilingsQuery(project.apiId, { skip: !canFile });
+  const filings = result.data ?? [];
 
   return (
     <Card>
@@ -92,76 +85,69 @@ export function FilingsTab({ project }: TabProps) {
           Manual tracker. Nothing here is read from or sent to a state system.
         </Callout>
       </div>
-      {filings.map((f) => (
-        <div key={f.id} className="row">
-          <div className="min-w-0 flex-[1_1_220px]">
-            <div className="font-medium">{f.type}</div>
-            <div className="help">
-              Submitted {f.submitted ? fmtDay(f.submitted) : "Not submitted"} · Ref <span className="mono">{f.ref || "—"}</span> · Next:{" "}
-              {f.next ? f.next + (f.nextDate ? ` · ${fmtDay(f.nextDate)}` : "") : "—"}
+      <QueryState query={result} isEmpty={filings.length === 0} empty={{ title: "No filings tracked" }} rows={2}>
+        {filings.map((f) => (
+          <div key={f.id} className="row">
+            <div className="min-w-0 flex-[1_1_220px]">
+              <div className="font-medium">{f.type}</div>
+              <div className="help">
+                Submitted {f.submitted ? fmtDay(f.submitted) : "Not submitted"} · Ref <span className="mono">{f.ref || "—"}</span> · Next:{" "}
+                {f.next ? f.next + (f.nextDate ? ` · ${fmtDay(f.nextDate)}` : "") : "—"}
+              </div>
             </div>
+            <Badge tone={FILING_TONE[f.status]}>{f.status}</Badge>
+            {canFile ? (
+              <Button size="sm" onClick={() => setEditing(f.id)}>
+                Update
+              </Button>
+            ) : null}
           </div>
-          <Badge tone={FILING_TONE[f.status]}>{f.status}</Badge>
-          {canFile ? (
-            <Button size="sm" onClick={() => edit(f.id)}>
-              Update
-            </Button>
-          ) : null}
-        </div>
-      ))}
-      {filings.length === 0 ? <EmptyState title="No filings tracked" /> : null}
+        ))}
+      </QueryState>
       {canFile ? (
         <div className="row">
-          <Button size="sm" variant="primary" onClick={() => edit("")}>
+          <Button size="sm" variant="primary" onClick={() => setEditing("")}>
             Add filing
           </Button>
         </div>
       ) : null}
-      {editing !== null ? <CaseFilingDialog filingId={editing} projectId={project.id} onClose={() => setEditing(null)} /> : null}
+      {editing !== null ? <CaseFilingDialog filing={filings.find((f) => f.id === editing)} project={project} onClose={() => setEditing(null)} /> : null}
     </Card>
   );
 }
 
 export function MessagesTab({ client, nav }: TabProps) {
-  const data = useData();
   const me = useMe();
-  const dispatch = useAppDispatch();
   const canChat = can(me, "conversation", client);
-  const msgs = (data.msgs[client.id] ?? []).slice(-5);
-
-  const openConv = () => {
-    if (dispatch(openConversation(client.id))) nav.go("messages", { query: { c: client.id } });
-  };
+  const result = useCaseMessagesQuery({ clientId: client.id, limit: 5 }, { skip: !canChat });
+  const msgs = result.data ?? [];
 
   return (
     <Card>
-      <div className="thread">
-        {msgs.map((m, i) => {
-          const sender = userById(data, m.from);
-          const attach = m.attach
-            ? me.role === "CSR"
-              ? " · Attachment withheld (CSRs can't open client files)"
-              : ` · Attached: ${m.attach} (simulated, not stored)`
-            : "";
-          return (
-            <MessageBubble
-              key={`${m.at ?? i}-${i}`}
-              text={m.text}
-              who={sender?.name ?? "Unknown"}
-              role={sender ? ROLE_LABEL[sender.role] : ""}
-              time={m.time}
-              mine={m.from === me.id}
-              senderRole={sender?.role}
-              suffix={attach}
-            />
-          );
-        })}
-        {msgs.length === 0 ? <span className="help m-auto">No messages yet.</span> : null}
-      </div>
+      <QueryState query={result} isEmpty={msgs.length === 0} empty={{ title: "No messages yet" }} rows={2}>
+        <div className="thread">
+          {msgs.map((m) => {
+            const role = ROLES.toLabel(m.fromRole);
+            const attach = m.attachmentName ? (me.role === "CSR" ? " · Attachment withheld (CSRs can't open client files)" : ` · Attached: ${m.attachmentName}`) : "";
+            return (
+              <MessageBubble
+                key={m.id}
+                text={m.text}
+                who={m.fromName}
+                role={ROLE_LABEL[role]}
+                time={fmtAt(m.at)}
+                mine={m.mine}
+                senderRole={role}
+                suffix={attach}
+              />
+            );
+          })}
+        </div>
+      </QueryState>
       {canChat ? (
         <div className="row">
           <span className="help flex-1">Showing the latest 5 messages from the shared client conversation.</span>
-          <Button size="sm" variant="primary" onClick={openConv}>
+          <Button size="sm" variant="primary" onClick={() => nav.go("messages", { query: { c: client.id } })}>
             Open conversation
           </Button>
         </div>

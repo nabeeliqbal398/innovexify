@@ -4,25 +4,7 @@ import type { ChangeEvent, ReactNode } from "react";
 
 import { Icon, type IconName } from "@/components/ui/icon";
 import { buttonVariants } from "@/components/ui/button";
-import { ROLE_LABEL } from "@/constants/vocab";
 import { cn } from "@/lib/cn";
-import { userById } from "@/store/selectors";
-import type { DemoData, Project, TicketEvent } from "@/types/domain";
-
-/** A formation is finished once it reaches the last stage or is marked Completed. */
-export function isDone(p: Project): boolean {
-  return p.stageIdx >= 10 || p.status === "Completed";
-}
-
-export function roleLabelOf(data: DemoData, id: string): string {
-  const u = userById(data, id);
-  return u ? ROLE_LABEL[u.role] : "";
-}
-
-/** Escalations are internal bookkeeping (status unchanged), so clients never see them. */
-export function isClientVisibleEvent(e: TicketEvent): boolean {
-  return !(e.from && e.from === e.to);
-}
 
 interface FileButtonProps {
   children: ReactNode;

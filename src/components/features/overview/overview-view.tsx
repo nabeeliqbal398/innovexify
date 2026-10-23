@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
-
 import type { ViewProps } from "@/components/features/workspace/types";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { PageHeader } from "@/components/ui/primitives";
+import { QueryState } from "@/components/common/query-state";
 import { cn } from "@/lib/cn";
-import { useData, useMe } from "@/hooks/useStore";
+import { useMe } from "@/hooks/useStore";
+import { useOverviewQuery } from "@/store/api/dashboard";
 import {
   AttentionList,
   CompletionTrends,
@@ -18,14 +18,23 @@ import {
   TeamWorkload,
   UpcomingDeadlines,
 } from "./overview-cards";
-import { buildOverview } from "./overview-model";
 
 const TONE_CLASS = { warn: "text-warning", err: "text-danger-hover" } as const;
 
 export function OverviewView({ nav }: ViewProps) {
-  const data = useData();
   const me = useMe();
-  const ov = useMemo(() => buildOverview(data, me), [data, me]);
+  const query = useOverviewQuery(me, { refetchOnMountOrArgChange: 30 });
+  const ov = query.data;
+  if (!ov) {
+    return (
+      <div className="stack-16">
+        <PageHeader title="Overview" />
+        <QueryState query={query} isEmpty={false} empty={{ title: "" }} rows={6}>
+          {null}
+        </QueryState>
+      </div>
+    );
+  }
 
   return (
     <div className="stack-16">

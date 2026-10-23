@@ -5,23 +5,28 @@ import { useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { isRollback, needsFilingNumber } from "@/components/features/cases/case-rules";
 import { Button } from "@/components/ui/button";
 import { Field, FieldRow, Input, Select } from "@/components/ui/form";
 import { Callout } from "@/components/ui/primitives";
 import { COMP_STAGES, STAGES } from "@/constants/vocab";
-import { useAppDispatch, useMe } from "@/hooks/useStore";
-import { moveStage, needsFilingNumber } from "@/store/actions/cases";
+import { useAction } from "@/hooks/useAction";
+import { useMe } from "@/hooks/useStore";
+import { CASE_STAGE } from "@/lib/api-mappers";
+import { useMoveStageMutation } from "@/store/api/cases";
 import type { Project } from "@/types/domain";
 
 interface StageValues {
   stage: string;
   filing: string;
+  reason: string;
 }
 
 /** Stage move for one project. Compliance only moves document milestones; CSRs see progress read-only. */
 export function StagePanel({ project }: { project: Project }) {
   const me = useMe();
-  const dispatch = useAppDispatch();
+  const run = useAction();
+  const [move, { isLoading }] = useMoveStageMutation();
   const current = STAGES[project.stageIdx];
   const canStage = me.role === "ADMIN" || me.role === "MANAGER" || (me.role === "COMPLIANCE" && COMP_STAGES.includes(current));
 
@@ -33,11 +38,14 @@ export function StagePanel({ project }: { project: Project }) {
   const schema = useMemo(
     () =>
       z
-        .object({ stage: z.string(), filing: z.string() })
+        .object({ stage: z.string(), filing: z.string(), reason: z.string() })
         .superRefine((v, ctx) => {
           if (v.stage === current) ctx.addIssue({ code: "custom", path: ["stage"], message: "Choose a different stage." });
           if (needsFilingNumber(project, v.stage) && !v.filing.trim()) {
             ctx.addIssue({ code: "custom", path: ["filing"], message: "Enter the state's confirmation number." });
+          }
+          if (isRollback(project, v.stage) && !v.reason.trim()) {
+            ctx.addIssue({ code: "custom", path: ["reason"], message: "Say why the case is moving back." });
           }
         }),
     [project, current],
@@ -50,17 +58,31 @@ export function StagePanel({ project }: { project: Project }) {
     watch,
     setError,
     formState: { errors, isValid },
-  } = useForm<StageValues>({ resolver: zodResolver(schema), defaultValues: { stage: current, filing: "" }, mode: "onChange" });
+  } = useForm<StageValues>({ resolver: zodResolver(schema), defaultValues: { stage: current, filing: "", reason: "" }, mode: "onChange" });
 
   useEffect(() => {
-    reset({ stage: current, filing: "" });
+    reset({ stage: current, filing: "", reason: "" });
   }, [current, reset]);
 
-  const needFiling = needsFilingNumber(project, watch("stage"));
+  const chosen = watch("stage");
+  const needFiling = needsFilingNumber(project, chosen);
+  const rollback = isRollback(project, chosen);
 
-  const submit = handleSubmit((values) => {
-    const result = dispatch(moveStage(project.id, values.stage, values.filing));
-    if (!result.ok && result.error) setError(/confirmation/i.test(result.error) ? "filing" : "stage", { message: result.error });
+  const submit = handleSubmit(async (values) => {
+    await run(
+      move({
+        id: project.apiId,
+        targetStage: CASE_STAGE.toKey(values.stage),
+        version: project.version,
+        ...(needFiling ? { filingConfirmation: values.filing.trim() } : {}),
+        ...(rollback ? { note: values.reason.trim() } : {}),
+      }),
+      {
+        success: `Moved to ${values.stage}`,
+        setError: ((name: string, e: { message?: string }) => setError(name === "filingConfirmation" ? "filing" : name === "targetStage" ? "stage" : name === "note" ? "reason" : "stage", { message: e.message })) as never,
+        fields: ["filingConfirmation", "targetStage", "note"],
+      },
+    );
   });
 
   if (!canStage) {
@@ -90,19 +112,17 @@ export function StagePanel({ project }: { project: Project }) {
         {needFiling ? (
           <Field label="State filing confirmation no." error={errors.filing?.message}>
             {(id, describedBy) => (
-              <Input
-                id={id}
-                className="mono"
-                aria-describedby={describedBy}
-                invalid={Boolean(errors.filing)}
-                placeholder="As issued by the state"
-                {...register("filing")}
-              />
+              <Input id={id} className="mono" aria-describedby={describedBy} invalid={Boolean(errors.filing)} placeholder="As issued by the state" {...register("filing")} />
             )}
           </Field>
         ) : null}
-        <Button type="submit" variant="primary" className="!min-w-0 !flex-none" disabled={!isValid}>
-          Confirm stage change
+        {rollback ? (
+          <Field label="Reason for moving back" error={errors.reason?.message}>
+            {(id, describedBy) => <Input id={id} aria-describedby={describedBy} invalid={Boolean(errors.reason)} {...register("reason")} />}
+          </Field>
+        ) : null}
+        <Button type="submit" variant="primary" className="!min-w-0 !flex-none" disabled={!isValid || isLoading}>
+          {isLoading ? "Moving…" : "Confirm stage change"}
         </Button>
       </FieldRow>
       <span className="help">

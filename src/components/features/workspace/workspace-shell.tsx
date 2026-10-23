@@ -1,11 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { AccessRail } from "@/components/features/workspace/access-rail";
+import { ConflictDialog } from "@/components/features/workspace/conflict-dialog";
 import { DeniedDialog } from "@/components/features/workspace/denied-dialog";
 import { GlobalSearch } from "@/components/features/workspace/global-search";
-import { NotificationsMenu } from "@/components/features/workspace/notifications-menu";
+import { NotificationsMenu, useUnreadCount } from "@/components/features/workspace/notifications-menu";
 import { SideNav } from "@/components/features/workspace/side-nav";
 import { ThemeToggle } from "@/components/features/workspace/theme-toggle";
 import { Badge } from "@/components/ui/badge";
@@ -13,40 +15,45 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { DEFAULT_VIEW, ROLE_LABEL, ROLE_TONE } from "@/constants/vocab";
 import { NAV } from "@/constants/nav";
-import { useData, useMe } from "@/hooks/useStore";
+import { useAppDispatch, useMe } from "@/hooks/useStore";
 import { useWorkspaceNav, type WorkspaceNav } from "@/hooks/useWorkspaceNav";
-import { projectById, userName } from "@/store/selectors";
+import { signOut } from "@/lib/session";
+import { useCompanyQuery } from "@/store/api/system";
 
 interface Crumb {
   label: string;
   go?: () => void;
 }
 
-function useCrumbs(nav: WorkspaceNav): Crumb[] {
-  const data = useData();
+function useCrumbs(nav: WorkspaceNav, companyName: string): Crumb[] {
   const me = useMe();
   const current = NAV[me.role].find((n) => n.view === nav.view);
-  const crumbs: Crumb[] = [{ label: data.company.name, go: () => nav.go(DEFAULT_VIEW[me.role]) }];
+  const crumbs: Crumb[] = [{ label: companyName, go: () => nav.go(DEFAULT_VIEW[me.role]) }];
   if (current?.group) crumbs.push({ label: current.group });
   const label = current?.label ?? (nav.view === "help" ? "Help & Guidance" : "");
   if (label) crumbs.push({ label, go: nav.id ? () => nav.go(nav.view) : undefined });
-  if (nav.id) {
-    const project = projectById(data, nav.id);
-    if (project) crumbs.push({ label: `${project.id} · ${userName(data, project.client)}` });
-  }
+  if (nav.id) crumbs.push({ label: "Case details" });
   return crumbs;
 }
 
 /** Header, role navigation and the page outlet shared by every workspace. */
 export function WorkspaceShell({ view, id, children }: { view: string; id?: string; children: ReactNode }) {
   const me = useMe();
-  const data = useData();
+  const dispatch = useAppDispatch();
+  const router = useRouter();
+  const company = useCompanyQuery().data ?? { name: "Innovexify", logo: "", casePrefix: "CASE" };
   const nav = useWorkspaceNav(view, id);
-  const crumbs = useCrumbs(nav);
+  const crumbs = useCrumbs(nav, company.name);
   const [railOpen, setRailOpen] = useState(true);
   const [menu, setMenu] = useState<"notifications" | "search" | null>(null);
   const isStaff = me.role !== "CLIENT";
-  const unread = (data.notifs[me.id] ?? []).filter((n) => n.unread).length;
+  const unread = useUnreadCount();
+  const [leaving, setLeaving] = useState(false);
+  const leave = async (): Promise<void> => {
+    setLeaving(true);
+    await signOut(dispatch);
+    router.replace("/");
+  };
 
   useEffect(() => {
     if (window.innerWidth < 1180) setRailOpen(false);
@@ -65,20 +72,17 @@ export function WorkspaceShell({ view, id, children }: { view: string; id?: stri
         Skip to content
       </a>
       <header className="relative z-10 flex flex-wrap items-center gap-2.5 border-b border-border bg-surface px-5 py-2.5">
-        <div className="flex items-center gap-[9px] text-xl font-bold tracking-tight" aria-label={data.company.name}>
-          {data.company.logo ? (
+        <div className="flex items-center gap-[9px] text-xl font-bold tracking-tight" aria-label={company.name}>
+          {company.logo ? (
             // Uploaded logos are data URLs chosen by the Admin, so next/image has nothing to optimise.
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={data.company.logo} alt={`${data.company.name} logo`} className="h-7 w-auto max-w-[120px] object-contain" />
+            <img src={company.logo} alt={`${company.name} logo`} className="h-7 w-auto max-w-[120px] object-contain" />
           ) : null}
-          <span>{data.company.name}</span>
+          <span>{company.name}</span>
         </div>
         <Badge tone={ROLE_TONE[me.role]}>
           <span>{ROLE_LABEL[me.role]} workspace</span>
         </Badge>
-        <span className="help hidden min-[1640px]:inline">
-          Prototype · fictional people · simulated permissions · resets on reload
-        </span>
         <GlobalSearch open={menu === "search"} onOpenChange={(o) => setMenu(o ? "search" : null)} nav={nav} />
         <div className="flex-1" />
         <span className="help inline-flex items-center gap-1.5 max-[860px]:sr-only">
@@ -88,6 +92,9 @@ export function WorkspaceShell({ view, id, children }: { view: string; id?: stri
           </strong>
         </span>
         <ThemeToggle />
+        <Button size="sm" variant="ghost" disabled={leaving} onClick={() => void leave()}>
+          {leaving ? "Signing out…" : "Sign out"}
+        </Button>
         {isStaff ? (
           <Button variant="ghost" size="icon" aria-label="Help and guidance" title="Help and guidance" onClick={() => nav.go("help")}>
             <Icon name="help" />
@@ -153,6 +160,7 @@ export function WorkspaceShell({ view, id, children }: { view: string; id?: stri
         {railOpen ? <AccessRail /> : null}
       </div>
       <DeniedDialog />
+      <ConflictDialog />
     </div>
   );
 }

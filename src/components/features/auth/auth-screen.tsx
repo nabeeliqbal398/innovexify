@@ -2,7 +2,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 
 import {
@@ -17,56 +18,15 @@ import {
   PasswordInput,
 } from "@/components/features/auth/auth-parts";
 import { Icon } from "@/components/ui/icon";
+import { ROLE_PATH } from "@/constants/vocab";
+import { useAction } from "@/hooks/useAction";
+import { useAppDispatch, useAppSelector } from "@/hooks/useStore";
+import { isApiError } from "@/lib/api-error";
 import { cn } from "@/lib/cn";
-import {
-  forgotSchema,
-  loginSchema,
-  newPasswordSchema,
-  otpSchema,
-  reauthSchema,
-  recoverySchema,
-  type ForgotValues,
-  type LoginValues,
-  type NewPasswordValues,
-} from "@/lib/validators";
-
-export const AUTH_SCREENS = [
-  { id: "login", label: "Sign in" },
-  { id: "forgot", label: "Forgot password" },
-  { id: "reset", label: "Reset password" },
-  { id: "twofa", label: "2FA" },
-  { id: "inviteValid", label: "Invite: valid" },
-  { id: "inviteExpired", label: "Invite: expired" },
-  { id: "inviteUsed", label: "Invite: used" },
-  { id: "inviteInvalid", label: "Invite: invalid" },
-  { id: "session", label: "Session expired" },
-] as const;
-
-export type AuthScreenId = (typeof AUTH_SCREENS)[number]["id"] | "done";
-type DoneKind = "signin" | "invite" | "reset";
-
-const DONE_COPY: Record<DoneKind, { title: string; body: string }> = {
-  signin: {
-    title: "You're signed in",
-    body: "In the real app you'd land on your dashboard now. Pick a workspace to continue.",
-  },
-  invite: {
-    title: "Account created",
-    body: "Sofia's account is active (simulated). The case ID is linked and the admin sees the invitation as accepted.",
-  },
-  reset: {
-    title: "Password updated",
-    body: "Other sessions were signed out. You can sign in with your new password.",
-  },
-};
-
-const WORKSPACES = [
-  { href: "/client", label: "Open client portal", primary: true },
-  { href: "/admin", label: "Open admin console" },
-  { href: "/manager", label: "Open manager workspace" },
-  { href: "/csr", label: "Open CSR workspace" },
-  { href: "/compliance", label: "Open compliance workspace" },
-] as const;
+import { establishSession } from "@/lib/session";
+import { loginSchema, newPasswordSchema, type LoginValues, type NewPasswordValues } from "@/lib/validators";
+import { useAcceptInvitationMutation, useInvitationQuery, useLoginMutation } from "@/store/api/auth";
+import { sessionActions } from "@/store/sessionSlice";
 
 const PANEL_POINTS = [
   "See progress on every project and task",
@@ -74,18 +34,8 @@ const PANEL_POINTS = [
   "Message your administrator directly",
 ];
 
-export function AuthScreen({ initial = "login" }: { initial?: AuthScreenId }) {
-  const [screen, setScreen] = useState<AuthScreenId>(initial);
-  const [done, setDone] = useState<DoneKind>("signin");
-  const [resetKey, setResetKey] = useState(0);
-
-  const go = useCallback((next: AuthScreenId, kind?: DoneKind) => {
-    if (kind) setDone(kind);
-    setScreen(next);
-    // Remount the form of the target screen so fields and errors start clean.
-    setResetKey((k) => k + 1);
-  }, []);
-
+/** Left brand panel and the right column every sign-in page shares. */
+function AuthFrame({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-wrap bg-background">
       <section
@@ -112,73 +62,91 @@ export function AuthScreen({ initial = "login" }: { initial?: AuthScreenId }) {
             ))}
           </ul>
         </div>
-        <p className="relative z-10 text-xs text-sidebar-muted">
-          Access is by invitation only. Need help? Contact your administrator.
-        </p>
+        <p className="relative z-10 text-xs text-sidebar-muted">Access is by invitation only. Need help? Contact your administrator.</p>
       </section>
-
       <section className="flex flex-[1_1_520px] flex-col items-center justify-center gap-5 px-6 py-10 max-[860px]:px-4 max-[860px]:py-7">
-        <div role="tablist" aria-label="Prototype: choose a screen state" className="flex max-w-[640px] flex-wrap justify-center gap-1">
-          {AUTH_SCREENS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              role="tab"
-              aria-selected={screen === s.id}
-              onClick={() => go(s.id)}
-              className={cn(
-                "h-7 cursor-pointer rounded-full border px-2.5 text-xs font-medium",
-                screen === s.id ? "border-foreground bg-foreground text-background" : "border-border bg-surface text-neutral hover:bg-muted",
-              )}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-
-        <div key={`${screen}-${resetKey}`} className="flex w-[min(400px,100%)] animate-rise flex-col gap-[18px]">
-          {screen === "login" ? <LoginForm onForgot={() => go("forgot")} onSuccess={() => go("twofa")} /> : null}
-          {screen === "forgot" ? <ForgotForm onBack={() => go("login")} /> : null}
-          {screen === "reset" ? <SetPasswordForm mode="reset" onDone={() => go("done", "reset")} /> : null}
-          {screen === "twofa" ? <TwoFactorForm onDone={() => go("done", "signin")} /> : null}
-          {screen === "done" ? <DonePanel kind={done} /> : null}
-          {screen === "inviteValid" ? <SetPasswordForm mode="invite" onDone={() => go("done", "invite")} /> : null}
-          {screen === "inviteExpired" ? <InviteExpired /> : null}
-          {screen === "inviteUsed" ? <InviteUsed onLogin={() => go("login")} onForgot={() => go("forgot")} /> : null}
-          {screen === "inviteInvalid" ? <InviteInvalid onLogin={() => go("login")} /> : null}
-          {screen === "session" ? <SessionExpired onDone={() => go("done", "signin")} onSwitch={() => go("login")} /> : null}
-        </div>
+        <div className="flex w-[min(400px,100%)] animate-rise flex-col gap-[18px]">{children}</div>
       </section>
     </div>
   );
 }
 
-function LoginForm({ onForgot, onSuccess }: { onForgot: () => void; onSuccess: () => void }) {
-  const [badCreds, setBadCreds] = useState(false);
+/** The sign-in page. Someone who is already signed in goes straight to their workspace. */
+export function AuthScreen() {
+  const router = useRouter();
+  const status = useAppSelector((s) => s.session.status);
+  const user = useAppSelector((s) => s.session.user);
+
+  useEffect(() => {
+    if (status === "authenticated" && user) router.replace(`/${ROLE_PATH[user.role]}`);
+  }, [status, user, router]);
+
+  if (status === "booting" || status === "authenticated") {
+    return (
+      <AuthFrame>
+        <div aria-busy="true" aria-label="Checking your session" className="flex flex-col gap-3">
+          <div className="skel h-8 w-1/2" />
+          <div className="skel h-[42px]" />
+          <div className="skel h-[42px]" />
+        </div>
+      </AuthFrame>
+    );
+  }
+  return (
+    <AuthFrame>
+      <LoginForm />
+    </AuthFrame>
+  );
+}
+
+function LoginForm() {
+  const dispatch = useAppDispatch();
+  const run = useAction();
+  const notice = useAppSelector((s) => s.session.notice);
+  const [login] = useLoginMutation();
+  const [problem, setProblem] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
     resetField,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<LoginValues>({ resolver: zodResolver(loginSchema), defaultValues: { email: "", password: "" } });
 
+  // The "your session ended" notice is shown once.
+  useEffect(() => {
+    if (notice) return () => void dispatch(sessionActions.noticeShown());
+    return undefined;
+  }, [notice, dispatch]);
+
   const submit = handleSubmit(async (values) => {
-    setBadCreds(false);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    if (values.password === "wrong") {
-      setBadCreds(true);
+    setProblem(null);
+    const outcome = await run(login({ email: values.email.trim(), password: values.password }), { setError, fields: ["email", "password"], quiet: true });
+    if (!outcome.ok) {
+      if (outcome.error.fieldErrors.length === 0) setProblem(outcome.error.message);
       resetField("password");
       return;
     }
-    onSuccess();
+    try {
+      await establishSession(dispatch, outcome.data.accessToken);
+    } catch (e) {
+      setProblem(isApiError(e) ? e.message : "We signed you in but couldn't load your account. Try again.");
+      return;
+    }
+    // AuthScreen sends a signed-in person to their workspace.
   });
 
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-[18px]">
       <AuthHeading title="Sign in" text="Use the email your invitation was sent to." />
-      {badCreds ? (
+      {notice ? (
+        <AuthAlert tone="warn" icon="lock" role="status">
+          {notice}
+        </AuthAlert>
+      ) : null}
+      {problem ? (
         <AuthAlert tone="err" icon="alert" role="alert">
-          That email and password don&apos;t match. Check both and try again.
+          {problem}
         </AuthAlert>
       ) : null}
       <AuthField id="login-email" label="Email" error={errors.email?.message}>
@@ -189,108 +157,162 @@ function LoginForm({ onForgot, onSuccess }: { onForgot: () => void; onSuccess: (
           aria-invalid={Boolean(errors.email) || undefined}
           aria-describedby={errors.email ? "login-email-err" : undefined}
           className={cn(authInput, errors.email && "border-danger")}
-          {...register("email", { onChange: () => setBadCreds(false) })}
+          {...register("email", { onChange: () => setProblem(null) })}
         />
       </AuthField>
-      <AuthField
-        id="login-password"
-        label="Password"
-        error={errors.password?.message}
-        aside={
-          <button type="button" onClick={onForgot} className="cursor-pointer border-0 bg-transparent p-0 text-sm text-primary-soft-foreground">
-            Forgot password?
-          </button>
-        }
-      >
+      <AuthField id="login-password" label="Password" error={errors.password?.message}>
         <PasswordInput
           id="login-password"
           autoComplete="current-password"
           invalid={Boolean(errors.password)}
-          {...register("password", { onChange: () => setBadCreds(false) })}
+          {...register("password", { onChange: () => setProblem(null) })}
         />
       </AuthField>
       <button type="submit" disabled={isSubmitting} className={authPrimary}>
-        {isSubmitting ? (
-          <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-        ) : null}
+        {isSubmitting ? <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : null}
         {isSubmitting ? "Signing in…" : "Sign in"}
       </button>
-      <p className="text-center text-sm text-muted-foreground">
-        Demo: any valid email works. Use the password “wrong” to see the error state.
-      </p>
+      <p className="text-center text-sm text-muted-foreground">Forgotten your password? Ask your administrator to send a new invitation.</p>
     </form>
   );
 }
 
-function ForgotForm({ onBack }: { onBack: () => void }) {
-  const [sent, setSent] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<ForgotValues>({ resolver: zodResolver(forgotSchema), defaultValues: { email: "" } });
+/** The page an invitation link opens: check the link, then let the person choose a password. */
+export function InviteScreen({ token }: { token: string }) {
+  const lookup = useInvitationQuery(token);
+  const router = useRouter();
 
-  return (
-    <form onSubmit={handleSubmit(() => setSent(true))} noValidate className="flex flex-col gap-[18px]">
-      <AuthHeading
-        title="Reset your password"
-        text="Enter your account email and we'll send a reset link that works for 30 minutes."
-      />
-      {sent ? (
-        <AuthAlert tone="ok" icon="check" role="status">
-          If an account exists for that email, a reset link is on its way. (Simulated, nothing was sent.)
-        </AuthAlert>
-      ) : null}
-      <AuthField id="forgot-email" label="Email" error={errors.email?.message}>
-        <input
-          id="forgot-email"
-          type="email"
-          autoComplete="email"
-          aria-invalid={Boolean(errors.email) || undefined}
-          aria-describedby={errors.email ? "forgot-email-err" : undefined}
-          className={cn(authInput, errors.email && "border-danger")}
-          {...register("email")}
-        />
-      </AuthField>
-      <button type="submit" className={authPrimary}>
-        Send reset link
-      </button>
-      <button type="button" onClick={onBack} className={authSecondary}>
-        Back to sign in
-      </button>
-    </form>
-  );
+  let body: ReactNode;
+  if (lookup.isLoading) {
+    body = (
+      <div aria-busy="true" aria-label="Checking your invitation" className="flex flex-col gap-3">
+        <div className="skel h-8 w-2/3" />
+        <div className="skel h-[42px]" />
+        <div className="skel h-[42px]" />
+      </div>
+    );
+  } else if (lookup.data) {
+    body = <AcceptForm token={token} email={lookup.data.email} invitedBy={lookup.data.invitedBy} caseNumber={lookup.data.caseNumber} expiresAt={lookup.data.expiresAt} />;
+  } else {
+    const code = isApiError(lookup.error) ? lookup.error.errorCode : "";
+    const status = isApiError(lookup.error) ? lookup.error.status : 0;
+    if (code === "INVITATION_EXPIRED") {
+      body = (
+        <div className="flex flex-col gap-[18px]">
+          <AuthIcon tone="warn" name="clock" />
+          <AuthHeading title="This invitation has expired" text="Invitation links work for 7 days. Ask the person who invited you to send a new one." />
+          <button type="button" onClick={() => router.push("/")} className={authSecondary}>
+            Back to sign in
+          </button>
+        </div>
+      );
+    } else if (code === "INVITATION_USED") {
+      body = (
+        <div className="flex flex-col gap-[18px]">
+          <AuthIcon tone="info" name="user" />
+          <AuthHeading title="You've already set up your account" text="This invitation link has been used. Sign in with your email and password instead." />
+          <button type="button" onClick={() => router.push("/")} className={authPrimary}>
+            Go to sign in
+          </button>
+        </div>
+      );
+    } else if (code === "INVITATION_INVALID" || status === 404) {
+      body = (
+        <div className="flex flex-col gap-[18px]">
+          <AuthIcon tone="err" name="alert" />
+          <AuthHeading
+            title="This link isn't valid"
+            text="It may have been copied incompletely. Open the link straight from your invitation email, or contact the person who invited you."
+          />
+          <button type="button" onClick={() => router.push("/")} className={authSecondary}>
+            Back to sign in
+          </button>
+        </div>
+      );
+    } else {
+      body = (
+        <div className="flex flex-col gap-[18px]">
+          <AuthIcon tone="err" name="alert" />
+          <AuthHeading title="We couldn't check this invitation" text={isApiError(lookup.error) ? lookup.error.message : "Try again in a moment."} />
+          <button type="button" onClick={() => void lookup.refetch()} className={authPrimary}>
+            Try again
+          </button>
+        </div>
+      );
+    }
+  }
+  return <AuthFrame>{body}</AuthFrame>;
 }
 
-function SetPasswordForm({ mode, onDone }: { mode: "reset" | "invite"; onDone: () => void }) {
+function AcceptForm({
+  token,
+  email,
+  invitedBy,
+  caseNumber,
+  expiresAt,
+}: {
+  token: string;
+  email: string;
+  invitedBy: string | null;
+  caseNumber: string | null;
+  expiresAt: string;
+}) {
+  const dispatch = useAppDispatch();
+  const router = useRouter();
+  const run = useAction();
+  const [accept] = useAcceptInvitationMutation();
+  const [problem, setProblem] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
+    setError,
     watch,
-    formState: { errors },
-  } = useForm<NewPasswordValues>({
-    resolver: zodResolver(newPasswordSchema),
-    defaultValues: { password: "", confirm: "" },
-    mode: "onChange",
-  });
+    formState: { errors, isSubmitting },
+  } = useForm<NewPasswordValues>({ resolver: zodResolver(newPasswordSchema), defaultValues: { password: "", confirm: "" }, mode: "onChange" });
   const password = watch("password");
-  const invite = mode === "invite";
+  const expires = new Date(expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+  const submit = handleSubmit(async (values) => {
+    setProblem(null);
+    const outcome = await run(accept({ token, password: values.password }), { setError, fields: ["password"], quiet: true });
+    if (!outcome.ok) {
+      if (outcome.error.fieldErrors.length === 0) setProblem(outcome.error.message);
+      return;
+    }
+    try {
+      await establishSession(dispatch, outcome.data.accessToken);
+    } catch {
+      setProblem("Your account is ready, but we couldn't sign you in. Go to the sign-in page and use your new password.");
+      return;
+    }
+    router.replace("/");
+  });
 
   return (
-    <form onSubmit={handleSubmit(onDone)} noValidate className="flex flex-col gap-[18px]">
-      {invite ? (
-        <AuthAlert tone="info" icon="mail">
-          <>
-            Invitation for <strong>sofia.l@lindqvist.se</strong> · Case <span className="mono">CASE-2026-0051</span> · expires Oct 20
-          </>
+    <form onSubmit={submit} noValidate className="flex flex-col gap-[18px]">
+      <AuthAlert tone="info" icon="mail">
+        <>
+          Invitation for <strong>{email}</strong>
+          {caseNumber ? (
+            <>
+              {" "}
+              · Case <span className="mono">{caseNumber}</span>
+            </>
+          ) : null}{" "}
+          · expires {expires}
+        </>
+      </AuthAlert>
+      <AuthHeading
+        title="Welcome to Innovexify"
+        text={invitedBy ? `${invitedBy} invited you. Set a password to finish.` : "You've been invited. Set a password to finish."}
+      />
+      {problem ? (
+        <AuthAlert tone="err" icon="alert" role="alert">
+          {problem}
         </AuthAlert>
       ) : null}
-      <AuthHeading
-        title={invite ? "Welcome to Innovexify" : "Choose a new password"}
-        text={invite ? "Sarah Bennett invited you to your private client portal. Set a password to finish." : "For alex.morgan@northfield.co"}
-      />
-      <AuthField id="set-password" label={invite ? "Create password" : "New password"}>
-        <PasswordInput id="set-password" autoComplete="new-password" {...register("password")} />
+      <AuthField id="set-password" label="Create password" error={errors.password?.message}>
+        <PasswordInput id="set-password" autoComplete="new-password" invalid={Boolean(errors.password)} {...register("password")} />
       </AuthField>
       <AuthField id="set-confirm" label="Confirm password" error={errors.confirm?.message}>
         <input
@@ -304,171 +326,15 @@ function SetPasswordForm({ mode, onDone }: { mode: "reset" | "invite"; onDone: (
         />
       </AuthField>
       <PasswordChecklist value={password} />
-      <button type="submit" className={authPrimary}>
-        {invite ? "Create account" : "Update password"}
-      </button>
-      {invite ? (
-        <p className="text-sm text-muted-foreground">By continuing you agree to the [YOUR TERMS] and [YOUR PRIVACY POLICY].</p>
-      ) : null}
-    </form>
-  );
-}
-
-function TwoFactorForm({ onDone }: { onDone: () => void }) {
-  const [recovery, setRecovery] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    reset,
-    setValue,
-    formState: { errors },
-  } = useForm<{ code: string }>({
-    resolver: zodResolver(recovery ? recoverySchema : otpSchema),
-    defaultValues: { code: "" },
-  });
-
-  const toggle = (): void => {
-    setRecovery((r) => !r);
-    reset({ code: "" });
-  };
-
-  return (
-    <form onSubmit={handleSubmit(onDone)} noValidate className="flex flex-col gap-[18px]">
-      <AuthIcon tone="brand" name="shield" />
-      <AuthHeading title="Two-step verification" text="Enter the 6-digit code from your authenticator app." />
-      <AuthField id="otp" label={recovery ? "Recovery code" : "Verification code"} error={errors.code?.message}>
-        <input
-          id="otp"
-          autoComplete="one-time-code"
-          inputMode={recovery ? "text" : "numeric"}
-          maxLength={9}
-          placeholder={recovery ? "XXXX-XXXX" : "000000"}
-          aria-invalid={Boolean(errors.code) || undefined}
-          aria-describedby={errors.code ? "otp-err" : undefined}
-          className={cn(authInput, "mono h-[52px] text-center text-[22px] tracking-[0.3em]", errors.code && "border-danger")}
-          {...register("code", {
-            onChange: (e) => {
-              const v = String(e.target.value);
-              setValue("code", recovery ? v.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 9) : v.replace(/\D/g, "").slice(0, 6));
-            },
-          })}
-        />
-      </AuthField>
-      <button type="submit" className={authPrimary}>
-        Verify
+      <button type="submit" disabled={isSubmitting} className={authPrimary}>
+        {isSubmitting ? "Creating your account…" : "Create account"}
       </button>
       <p className="text-center text-sm text-muted-foreground">
-        {recovery ? "Have your device?" : "Lost your device?"}{" "}
-        <button type="button" onClick={toggle} className="cursor-pointer border-0 bg-transparent p-0 text-primary-soft-foreground">
-          {recovery ? "Use an authenticator code" : "Use a recovery code"}
-        </button>
+        Already have an account?{" "}
+        <Link href="/" className="text-primary-soft-foreground">
+          Sign in
+        </Link>
       </p>
-    </form>
-  );
-}
-
-function DonePanel({ kind }: { kind: DoneKind }) {
-  const copy = DONE_COPY[kind];
-  return (
-    <div className="flex flex-col items-center gap-[18px] text-center">
-      <AuthIcon tone="ok" name="check" />
-      <h2 className="text-[22px] font-semibold">{copy.title}</h2>
-      <p className="text-sm text-muted-foreground">{copy.body}</p>
-      <div className="flex flex-wrap justify-center gap-2">
-        {WORKSPACES.map((w) => (
-          <Link
-            key={w.href}
-            href={w.href}
-            className={cn(
-              "inline-flex h-10 items-center rounded-md border px-4 font-medium no-underline",
-              "primary" in w && w.primary
-                ? "border-primary bg-primary text-primary-foreground hover:bg-primary-hover hover:text-primary-foreground"
-                : "border-border bg-surface text-foreground hover:bg-background hover:text-foreground",
-            )}
-          >
-            {w.label}
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function InviteExpired() {
-  const [requested, setRequested] = useState(false);
-  return (
-    <div className="flex flex-col gap-[18px]">
-      <AuthIcon tone="warn" name="clock" />
-      <AuthHeading
-        title="This invitation has expired"
-        text="Invitation links work for 7 days. Ask for a new one and we'll let your administrator know."
-      />
-      {requested ? (
-        <AuthAlert tone="ok" icon="check" role="status">
-          Request recorded. Your administrator will send a fresh link. (Simulated.)
-        </AuthAlert>
-      ) : null}
-      <button type="button" disabled={requested} onClick={() => setRequested(true)} className={authPrimary}>
-        Request a new invitation
-      </button>
-    </div>
-  );
-}
-
-function InviteUsed({ onLogin, onForgot }: { onLogin: () => void; onForgot: () => void }) {
-  return (
-    <div className="flex flex-col gap-[18px]">
-      <AuthIcon tone="info" name="user" />
-      <AuthHeading
-        title="You've already set up your account"
-        text="This invitation link has been used. Sign in with your email and password instead."
-      />
-      <button type="button" onClick={onLogin} className={authPrimary}>
-        Go to sign in
-      </button>
-      <button type="button" onClick={onForgot} className={authSecondary}>
-        I forgot my password
-      </button>
-    </div>
-  );
-}
-
-function InviteInvalid({ onLogin }: { onLogin: () => void }) {
-  return (
-    <div className="flex flex-col gap-[18px]">
-      <AuthIcon tone="err" name="alert" />
-      <AuthHeading
-        title="This link isn't valid"
-        text="It may have been copied incompletely. Open the link straight from your invitation email, or contact the person who invited you."
-      />
-      <button type="button" onClick={onLogin} className={authSecondary}>
-        Back to sign in
-      </button>
-    </div>
-  );
-}
-
-function SessionExpired({ onDone, onSwitch }: { onDone: () => void; onSwitch: () => void }) {
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<{ password: string }>({ resolver: zodResolver(reauthSchema), defaultValues: { password: "" } });
-  return (
-    <form onSubmit={handleSubmit(onDone)} noValidate className="flex flex-col gap-[18px]">
-      <AuthAlert tone="warn" icon="lock" role="alert">
-        Your session timed out after 30 minutes of inactivity.
-      </AuthAlert>
-      <AuthHeading title="Confirm it's you" text="Signed in as alex.morgan@northfield.co. Unsaved form changes are kept." />
-      <AuthField id="reauth-password" label="Password" error={errors.password?.message}>
-        <PasswordInput id="reauth-password" autoComplete="current-password" invalid={Boolean(errors.password)} {...register("password")} />
-      </AuthField>
-      <button type="submit" className={authPrimary}>
-        Continue
-      </button>
-      <button type="button" onClick={onSwitch} className={authSecondary}>
-        Sign in as someone else
-      </button>
     </form>
   );
 }

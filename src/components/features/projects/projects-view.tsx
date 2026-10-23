@@ -1,12 +1,19 @@
 "use client";
 
+import { useState } from "react";
+
+import { Pager } from "@/components/common/pager";
+import { QueryState } from "@/components/common/query-state";
 import { CreateProjectForm } from "@/components/features/projects/create-project-form";
 import { ProjectRow } from "@/components/features/projects/project-row";
 import { useOpenCase } from "@/components/features/projects/use-open-case";
 import type { ViewProps } from "@/components/features/workspace/types";
-import { EmptyState, PageHeader } from "@/components/ui/primitives";
-import { useData, useMe } from "@/hooks/useStore";
+import { PageHeader } from "@/components/ui/primitives";
+import { useMe } from "@/hooks/useStore";
 import { can } from "@/lib/permissions";
+import { useCasesQuery } from "@/store/api/cases";
+
+const PAGE_SIZE = 8;
 
 const COPY = {
   CSR: {
@@ -24,33 +31,47 @@ const COPY = {
 } as const;
 
 export function ProjectsView({ nav }: ViewProps) {
-  const data = useData();
   const me = useMe();
   const openCase = useOpenCase(nav);
+  const [page, setPage] = useState(1);
   const copy = me.role === "CSR" ? COPY.CSR : me.role === "COMPLIANCE" ? COPY.COMPLIANCE : COPY.DEFAULT;
   const openId = nav.param("project");
-
-  const rows = data.projects.flatMap((project) => {
-    const client = data.users.find((u) => u.id === project.client);
-    return client && client.status !== "Removed" && can(me, "viewClient", client) ? [{ project, client }] : [];
-  });
+  const result = useCasesQuery({ page, limit: PAGE_SIZE, sort: "lastActivityAt", order: "desc" });
+  const rows = result.data?.items ?? [];
+  const meta = result.data?.meta;
 
   return (
     <div className="stack-16">
       <PageHeader title={copy.title} description={copy.sub} />
       {can(me, "manageProjects") ? <CreateProjectForm /> : null}
       <section className="card overflow-hidden" aria-label="Projects">
-        {rows.map(({ project, client }) => (
-          <ProjectRow
-            key={project.id}
-            project={project}
-            client={client}
-            open={openId === project.id}
-            onToggle={() => nav.setParams({ project: openId === project.id ? undefined : project.id })}
-            onOpenCase={() => openCase(project.id)}
+        <QueryState
+          query={result}
+          isEmpty={rows.length === 0}
+          empty={{ title: "No projects yet", text: "Formation projects for clients in your scope appear here." }}
+          rows={4}
+        >
+          {rows.map((project) => (
+            <ProjectRow
+              key={project.apiId}
+              project={project}
+              open={openId === project.apiId}
+              onToggle={() => nav.setParams({ project: openId === project.apiId ? undefined : project.apiId })}
+              onOpenCase={() => openCase(project.apiId)}
+            />
+          ))}
+        </QueryState>
+        {meta ? (
+          <Pager
+            page={meta.page - 1}
+            pageCount={meta.totalPages}
+            total={meta.total}
+            pageSize={PAGE_SIZE}
+            noun="projects"
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => p + 1)}
           />
-        ))}
-        {rows.length === 0 ? <EmptyState title="No projects yet" text="Formation projects for clients in your scope appear here." /> : null}
+        ) : null}
       </section>
     </div>
   );

@@ -1,13 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
+import { ErrorState } from "@/components/common/query-state";
 import { Callout, Card, CardHeader, HBar, PageHeader, Segmented, Skeleton, VBars } from "@/components/ui/primitives";
 import { can } from "@/lib/permissions";
-import { useData, useMe } from "@/hooks/useStore";
-import { buildAnalytics, RANGES, type Analytics, type RangeKey } from "./analytics-model";
+import { useMe } from "@/hooks/useStore";
+import { useAnalyticsQuery } from "@/store/api/dashboard";
+import { RANGES, type Analytics, type RangeKey } from "./analytics-model";
 
-const LOAD_MS = 450;
+/** A calendar date as YYYY-MM-DD in the person's own day, `days` before today (the server reads it as a UTC date). */
+function dayAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function Figure({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
@@ -130,26 +137,16 @@ function WorkloadTables({ a }: { a: Analytics }) {
 }
 
 export function AnalyticsView() {
-  const data = useData();
   const me = useMe();
   const [range, setRange] = useState<RangeKey>("90");
-  const [loading, setLoading] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const allowed = can(me, "analytics");
-  const a = useMemo(() => (allowed ? buildAnalytics(data, me, range) : null), [allowed, data, me, range]);
+  const days = RANGES.find((r) => r.value === range)?.days ?? 90;
+  // A 24-month range is the longest the server allows: it starts 729 days back so today is included.
+  const window = useMemo(() => ({ from: dayAgo(days - 1), to: dayAgo(0) }), [days]);
+  const query = useAnalyticsQuery(window, { skip: !allowed });
+  const a = allowed ? query.data : null;
 
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
-
-  const pick = (next: RangeKey) => {
-    setRange(next);
-    setLoading(true);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setLoading(false), LOAD_MS);
-  };
-
-  if (!a) {
+  if (!allowed) {
     return (
       <div className="stack-16">
         <PageHeader title="Reports & analytics" />
@@ -165,16 +162,18 @@ export function AnalyticsView() {
     <div className="stack-16">
       <PageHeader
         title="Reports & analytics"
-        description={`Calculated from the demo records in this session (${phrase}). These are not live business metrics.`}
-        actions={<Segmented label="Date range" value={range} onChange={pick} options={RANGES.map((r) => ({ value: r.value, label: r.label }))} />}
+        description={`Counted from the live records (${phrase}). Results are cached for about a minute.`}
+        actions={<Segmented label="Date range" value={range} onChange={setRange} options={RANGES.map((r) => ({ value: r.value, label: r.label }))} />}
       />
-      {loading ? (
+      {query.isError ? <ErrorState error={query.error} onRetry={() => void query.refetch()} title="We could not load the figures" /> : null}
+      {!a && !query.isError ? (
         <div className="statgrid" aria-busy="true" aria-label="Loading analytics">
           {[0, 1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-[120px]" />
           ))}
         </div>
-      ) : (
+      ) : null}
+      {a ? (
         <>
           <section className="kpis" aria-label="Headline figures">
             <Figure label="Formations completed" value={String(a.completed)} sub="in range" />
@@ -195,9 +194,8 @@ export function AnalyticsView() {
             <BarCard title="Client onboarding completion" aside={`${a.clientsN} clients`} rows={a.onboard.map((r) => ({ label: r.label, n: r.pct }))} fixedMax={100} suffix="%" />
           </div>
           <WorkloadTables a={a} />
-          <p className="help">No export is offered here: this prototype has no file download pipeline, so an export button would not produce a real file.</p>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

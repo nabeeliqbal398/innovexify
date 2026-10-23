@@ -2,6 +2,7 @@ import type {
   CaseStatus,
   DocStatus,
   FilingStatus,
+  NotificationPrefs,
   Priority,
   Role,
   TicketStatus,
@@ -158,11 +159,11 @@ export const DEFAULT_VIEW: Record<Role, string> = {
   CLIENT: "home",
 };
 
-/** The user each role workspace is locked to. */
-export const LOCKED_USER: Record<Role, string> = {
-  ADMIN: "u1",
-  MANAGER: "u2",
-  CSR: "u3",
-  COMPLIANCE: "u5",
-  CLIENT: "c42",
+/** Both channels on, which is what the server uses for a category nobody has changed. */
+export const NOTIFICATION_PREF_DEFAULTS: NotificationPrefs = {
+  msg: { email: true, app: true },
+  docs: { email: true, app: true },
+  stage: { email: true, app: true },
+  tickets: { email: true, app: true },
+  anns: { email: true, app: true },
 };

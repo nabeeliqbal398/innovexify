@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { PageHeader, Tabs } from "@/components/ui/primitives";
 import { ROLE_LABEL } from "@/constants/vocab";
-import { useData, useMe } from "@/hooks/useStore";
+import { useMe } from "@/hooks/useStore";
+import { useCompanyQuery } from "@/store/api/system";
 import type { ViewProps } from "@/components/features/workspace/types";
 
 import { FAQ, GUIDES, type GuideKey } from "./help-content";
@@ -27,7 +28,7 @@ function isHelpTab(v: string | undefined): v is HelpTab {
 
 export function HelpView({ nav }: ViewProps) {
   const me = useMe();
-  const { company } = useData();
+  const company = { name: useCompanyQuery().data?.name ?? "Innovexify" };
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const param = nav.param("tab");
   const tab: HelpTab = isHelpTab(param) ? param : "start";
