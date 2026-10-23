@@ -1,0 +1,81 @@
+:root {
+  --background: 210 40% 98%;
+  --foreground: 222 47% 11%;
+  --surface: 0 0% 100%;
+  --surface-muted: 216 50% 99%;
+  --border: 214 32% 91%;
+  --border-strong: 213 27% 84%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+
+  --primary: 243 75% 59%;
+  --primary-hover: 244 57% 51%;
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 226 100% 97%;
+  --primary-soft-foreground: 244 57% 51%;
+
+  --sidebar: 222 47% 11%;
+  --sidebar-hover: 217 33% 17%;
+  --sidebar-foreground: 213 27% 84%;
+  --sidebar-muted: 215 20% 65%;
+  --sidebar-accent: 229 94% 82%;
+
+  --success: 142 72% 29%;
+  --success-soft: 138 76% 97%;
+  --info: 224 76% 48%;
+  --info-soft: 214 100% 97%;
+  --warning: 26 90% 37%;
+  --warning-soft: 48 100% 96%;
+  --danger: 0 72% 51%;
+  --danger-hover: 0 74% 42%;
+  --danger-soft: 0 86% 97%;
+  --violet: 263 70% 50%;
+  --violet-soft: 250 100% 98%;
+  --teal: 175 77% 26%;
+  --teal-soft: 166 76% 97%;
+  --neutral: 215 19% 35%;
+  --neutral-soft: 210 40% 96%;
+
+  --ring: 243 75% 59%;
+}
+
+:root[data-theme="dark"] {
+  --background: 222 47% 7%;
+  --foreground: 210 40% 96%;
+  --surface: 222 40% 11%;
+  --surface-muted: 222 38% 9%;
+  --border: 217 25% 20%;
+  --border-strong: 217 22% 28%;
+  --muted: 217 30% 16%;
+  --muted-foreground: 215 20% 65%;
+
+  --primary: 243 85% 67%;
+  --primary-hover: 243 85% 72%;
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 243 40% 20%;
+  --primary-soft-foreground: 229 94% 82%;
+
+  --sidebar: 222 47% 6%;
+  --sidebar-hover: 217 33% 14%;
+  --sidebar-foreground: 213 27% 84%;
+  --sidebar-muted: 215 20% 60%;
+  --sidebar-accent: 229 94% 82%;
+
+  --success: 142 60% 55%;
+  --success-soft: 142 40% 14%;
+  --info: 213 90% 70%;
+  --info-soft: 218 45% 17%;
+  --warning: 38 92% 60%;
+  --warning-soft: 35 50% 14%;
+  --danger: 0 84% 62%;
+  --danger-hover: 0 90% 72%;
+  --danger-soft: 0 45% 16%;
+  --violet: 258 90% 78%;
+  --violet-soft: 258 35% 18%;
+  --teal: 172 66% 55%;
+  --teal-soft: 175 40% 14%;
+  --neutral: 215 20% 72%;
+  --neutral-soft: 217 30% 18%;
+
+  --ring: 243 85% 72%;
+}
