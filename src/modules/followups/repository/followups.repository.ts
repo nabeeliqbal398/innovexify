@@ -96,4 +96,18 @@ export class FollowUpsRepository {
       this.prisma.interaction.count({ where: { clientId } }),
     ]);
   }
+
+  /** The newest interactions across the clients in `where`, each with its client. */
+  async recentInteractions(where: Prisma.InteractionWhereInput, skip: number, take: number) {
+    return this.prisma.$transaction([
+      this.prisma.interaction.findMany({
+        where,
+        orderBy: [{ at: "desc" }, { id: "desc" }],
+        skip,
+        take,
+        select: { ...interactionSelect, client: { select: { id: true, name: true, clientProfile: { select: { caseNumber: true } } } } },
+      }),
+      this.prisma.interaction.count({ where }),
+    ]);
+  }
 }

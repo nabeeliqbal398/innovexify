@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import type { NotificationCategory, Prisma, Role } from "@prisma/client";
+import { Prisma, type NotificationCategory, type Role } from "@prisma/client";
 
 import { PrismaService } from "../../../prisma/prisma.service";
 import { userSelect, type ReassignmentLoad, type UserRecord } from "../interfaces/users.interfaces";
@@ -90,4 +90,48 @@ export class UsersRepository {
       create: { userId, category, email: change.email ?? true, inApp: change.inApp ?? true },
     });
   }
+
+  /** Active staff, by name: the few fields a picker needs. */
+  directory(roles: Role[]): Promise<Array<{ id: string; name: string; role: Role }>> {
+    return this.prisma.user.findMany({
+      where: { role: { in: roles }, status: "ACTIVE", deletedAt: null },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      take: 500,
+      select: { id: true, name: true, role: true },
+    });
+  }
+
+  /** What the staff directory shows beside each person, for the people on one page: workload and the latest allowed action. */
+  async staffExtras(ids: readonly string[], today: Date): Promise<Map<string, StaffExtras>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.prisma.$queryRaw<
+      Array<{ id: string; last_activity: Date | null; clients: number; cases: number; tasks: number; overdue: number; follow_ups: number; tickets: number; reviews: number }>
+    >`
+      SELECT u.id,
+        (SELECT max(a."createdAt") FROM "AuditLog" a WHERE a."actorId" = u.id AND a.ok) AS last_activity,
+        (SELECT count(*)::int FROM "ClientProfile" cp JOIN "User" cu ON cu.id = cp."userId" WHERE cp."csrId" = u.id AND cu."deletedAt" IS NULL) AS clients,
+        (SELECT count(*)::int FROM "Case" c
+           WHERE c."deletedAt" IS NULL AND c.stage <> 'Completed'::"CaseStage" AND c.status <> 'Completed'::"CaseStatus"
+             AND (c."ownerId" = u.id OR EXISTS (SELECT 1 FROM "ClientProfile" cp WHERE cp."userId" = c."clientId" AND cp."csrId" = u.id))) AS cases,
+        (SELECT count(*)::int FROM "Task" k WHERE k."assigneeId" = u.id AND k.done = false) AS tasks,
+        (SELECT count(*)::int FROM "Task" k WHERE k."assigneeId" = u.id AND k.done = false AND k.due < ${today}) AS overdue,
+        (SELECT count(*)::int FROM "FollowUp" f WHERE f."csrId" = u.id AND f.status = 'Open'::"FollowUpStatus") AS follow_ups,
+        (SELECT count(*)::int FROM "Ticket" t WHERE t."handlerId" = u.id AND t.status NOT IN ('Resolved'::"TicketStatus", 'Closed'::"TicketStatus")) AS tickets,
+        (SELECT count(*)::int FROM "Document" d WHERE d."reviewedById" = u.id AND d."reviewedAt" > now() - interval '30 days') AS reviews
+      FROM "User" u WHERE u.id IN (${Prisma.join(ids)})`;
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        {
+          lastActivityAt: r.last_activity,
+          workload: { clients: r.clients, cases: r.cases, openTasks: r.tasks, overdueTasks: r.overdue, openFollowUps: r.follow_ups, openTickets: r.tickets, reviewsLast30Days: r.reviews },
+        },
+      ]),
+    );
+  }
+}
+
+export interface StaffExtras {
+  lastActivityAt: Date | null;
+  workload: { clients: number; cases: number; openTasks: number; overdueTasks: number; openFollowUps: number; openTickets: number; reviewsLast30Days: number };
 }

@@ -8,6 +8,7 @@ export const userSelect = {
   role: true,
   status: true,
   invitedById: true,
+  invitedBy: { select: { name: true } },
   lastLoginAt: true,
   createdAt: true,
   updatedAt: true,

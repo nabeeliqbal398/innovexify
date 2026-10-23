@@ -59,7 +59,7 @@ describe("settings: company, services, automation, access (e2e)", () => {
 
     it("lets a Manager change the prefix but not the name or logo", async () => {
       expect((await as(max).patch("/api/v1/company").send({ casePrefix: "MGR" })).status).toBe(200);
-      for (const body of [{ name: "Manager Co" }, { logo: png() }, { name: "X", casePrefix: "OK" }]) {
+      for (const body of [{ name: "Manager Co" }, { logo: png() }, { name: "Xy", casePrefix: "OK" }]) {
         const res = await as(max).patch("/api/v1/company").send(body);
         expect(res.status).toBe(403);
         expect(res.body.errorCode).toBe("PERMISSION_DENIED");
@@ -78,6 +78,12 @@ describe("settings: company, services, automation, access (e2e)", () => {
       expect(bad.body.errors.map((e: { field: string }) => e.field).sort()).toEqual(["casePrefix", "name"]);
       expect((await as(ada).patch("/api/v1/company").send({ casePrefix: "TOOLONGPREFIX" })).status).toBe(422);
       expect((await as(ada).patch("/api/v1/company").send({ name: "   " })).status).toBe(422);
+      // The boundaries: names are 2 to 60 characters, prefixes 2 to 8 letters.
+      expect((await as(ada).patch("/api/v1/company").send({ name: "A" })).status).toBe(422);
+      expect((await as(ada).patch("/api/v1/company").send({ casePrefix: "A" })).status).toBe(422);
+      expect((await as(ada).patch("/api/v1/company").send({ casePrefix: "ABCDEFGHI" })).status).toBe(422);
+      expect((await as(ada).patch("/api/v1/company").send({ name: "AB", casePrefix: "ab" })).body.data).toMatchObject({ name: "AB", casePrefix: "AB" });
+      expect((await as(ada).patch("/api/v1/company").send({ name: "n".repeat(60), casePrefix: "ABCDEFGH" })).status).toBe(200);
       expect((await as(ada).patch("/api/v1/company").send({})).status).toBe(422);
     });
 
@@ -115,6 +121,17 @@ describe("settings: company, services, automation, access (e2e)", () => {
       expect((await as(alex).get("/api/v1/services")).body.data.map((s: { id: string }) => s.id).sort()).toEqual(["corp", "llc"]);
       expect((await as(alex).get("/api/v1/services/address")).status).toBe(404);
       expect((await as(sam).get("/api/v1/services/address")).status).toBe(200);
+    });
+
+    it("counts the unfinished cases per service for staff, and not for a client", async () => {
+      const bea = await makeUser(t.prisma, { email: "bea@test.dev", name: "Bea Client", role: "CLIENT", csrId: sam.id });
+      await t.prisma.case.create({ data: { number: 950, clientId: alex.id, serviceId: "llc" } });
+      await t.prisma.case.create({ data: { number: 951, clientId: bea.id, serviceId: "llc", stage: "COMPLETED", status: "COMPLETED" } });
+      await t.prisma.case.create({ data: { number: 952, clientId: bea.id, serviceId: "corp", deletedAt: new Date() } });
+      const staff = (await as(max).get("/api/v1/services")).body.data as Array<{ id: string; activeCases?: number }>;
+      expect(Object.fromEntries(staff.map((s) => [s.id, s.activeCases]))).toEqual({ address: 0, corp: 0, llc: 1 });
+      const client = (await as(alex).get("/api/v1/services")).body.data as Array<{ activeCases?: number }>;
+      expect(client.every((s) => s.activeCases === undefined)).toBe(true);
     });
 
     it("lets Admin and Manager add one with an id made from the name", async () => {

@@ -25,6 +25,14 @@ export class ListDocumentsQueryDto extends PaginationQueryDto {
   @IsEnum(DocType, { message: `type must be one of: ${Object.values(DocType).join(", ")}.` })
   type?: DocType;
 
+  @ApiPropertyOptional({
+    enum: ["submissions", "outstanding"],
+    description: "submissions: documents that have been through the client (everything except still-requested and shared ones). outstanding: waiting on the client (requested or sent back). Narrows `status`, never widens it.",
+  })
+  @IsOptional()
+  @IsIn(["submissions", "outstanding"], { message: "group must be submissions or outstanding." })
+  group?: "submissions" | "outstanding";
+
   @ApiPropertyOptional({ description: "Matches the document name or the client's name (and, for staff who may see it, the file name)." })
   @IsOptional()
   @Transform(trim)

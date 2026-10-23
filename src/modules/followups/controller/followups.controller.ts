@@ -11,6 +11,7 @@ import {
   CreateInteractionDto,
   ListFollowUpsQueryDto,
   ListInteractionsQueryDto,
+  ListRecentInteractionsQueryDto,
   UpdateFollowUpDto,
 } from "../dto/followups.dto";
 import { FollowUpsService } from "../service/followups.service";
@@ -26,6 +27,13 @@ export class FollowUpsController {
   @ApiOperation({ summary: "List follow-ups (a CSR sees only their own)" })
   list(@Query() query: ListFollowUpsQueryDto, @Req() request: RequestContext) {
     return this.followUps.list(actorContextOf(request), query);
+  }
+
+  // Declared before any ":id" route so "interactions" is never read as an id.
+  @Get("interactions")
+  @ApiOperation({ summary: "The newest interactions across your clients (a CSR: their own clients), each with its client" })
+  recentInteractions(@Query() query: ListRecentInteractionsQueryDto, @Req() request: RequestContext) {
+    return this.followUps.recentInteractions(actorContextOf(request), query);
   }
 
   @Post()

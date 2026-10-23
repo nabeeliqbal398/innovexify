@@ -14,6 +14,7 @@ Base `/api/v1`. Everything needs the `followups` permission (Admin, Manager, CSR
 
 | Method | Route | Request | Response `data` |
 | --- | --- | --- | --- |
+| GET | `/followups/interactions` | `?clientId&page&limit` | page of the newest interactions across your clients (a CSR: their own), each with its `client` |
 | GET | `/followups` | `?csrId&clientId&status&filter&sort&order&page&limit` | page of follow-ups |
 | POST | `/followups` | `{ clientId, type, due, note }` | the follow-up |
 | PATCH | `/followups/:id` | any of `type, due, note` (open ones only) | the follow-up |
@@ -23,7 +24,7 @@ Base `/api/v1`. Everything needs the `followups` permission (Admin, Manager, CSR
 | POST | `/clients/:clientId/interactions` | `{ kind, text }` | the interaction |
 
 `filter` (open follow-ups only): `overdue` (due before today), `today`, `upcoming` (after today). Sort fields: `due` (default),
-`createdAt`, `status`. Each follow-up carries `overdue`, computed on the server.
+`createdAt`, `status`, `doneAt`. Each follow-up carries `overdue`, computed on the server.
 
 ## Scope
 Admin and Manager: every follow-up and every client. CSR: only follow-ups whose `csrId` is theirs, and only clients assigned to

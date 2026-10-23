@@ -383,6 +383,49 @@ describe("tickets (e2e)", () => {
     });
   });
 
+  describe("the active / finished group filter", () => {
+    it("splits tickets into those still being worked and those resolved or closed", async () => {
+      const a = await seed(client1, { status: "IN_PROGRESS" });
+      const b = await seed(client1, { status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "x" });
+      const c = await seed(client1, { status: "CLOSED" });
+      const ids = async (q: string) => ((await as(csr1).get(`/api/v1/tickets?${q}`)).body.data as Array<{ id: string }>).map((t) => t.id).sort();
+      expect(await ids("group=active")).toEqual([a.id]);
+      expect(await ids("group=finished")).toEqual([b.id, c.id].sort());
+      expect((await as(csr1).get("/api/v1/tickets?group=nope")).body.errors[0].field).toBe("group");
+    });
+  });
+
+  describe("addressing a ticket by its number", () => {
+    it("opens TKT-n like the id, with the same scoping", async () => {
+      const mine = await seed(client1);
+      const theirs = await seed(client2);
+      const res = await as(csr1).get(`/api/v1/tickets/TKT-${mine.number}`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.id).toBe(mine.id);
+      expect((await as(csr1).get(`/api/v1/tickets/tkt-${theirs.number}`)).status).toBe(404);
+      expect((await as(client1).get(`/api/v1/tickets/TKT-${theirs.number}`)).status).toBe(404);
+    });
+  });
+
+  describe("allowedStatuses (the buttons a screen may offer)", () => {
+    it("gives staff the workflow's next steps for every status", async () => {
+      for (const from of ALL) {
+        const ticket = await seed(client1, { status: from, ...(from === "RESOLVED" ? { resolvedAt: new Date(), resolutionNote: "x" } : {}) });
+        const got = (await as(csr1).get(`/api/v1/tickets/${ticket.id}`)).body.data.allowedStatuses as TicketStatus[];
+        expect([...got].sort()).toEqual(ALL.filter((to) => allowed(from, to)).sort());
+      }
+    });
+
+    it("gives a client only Closed and Open while resolved, Open only inside the window, and nothing otherwise", async () => {
+      const open = await seed(client1, { status: "IN_PROGRESS" });
+      expect((await as(client1).get(`/api/v1/tickets/${open.id}`)).body.data.allowedStatuses).toEqual([]);
+      const fresh = await seed(client1, { status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "x" });
+      expect((await as(client1).get(`/api/v1/tickets/${fresh.id}`)).body.data.allowedStatuses.sort()).toEqual(["CLOSED", "OPEN"]);
+      const old = await seed(client1, { status: "RESOLVED", resolvedAt: new Date(Date.now() - 8 * 86_400_000), resolutionNote: "x" });
+      expect((await as(client1).get("/api/v1/tickets")).body.data.find((x: { id: string }) => x.id === old.id).allowedStatuses).toEqual(["CLOSED"]);
+    });
+  });
+
   describe("what a client may do to a resolved ticket", () => {
     it("lets a client reopen a resolved ticket inside the window", async () => {
       const ticket = await seed(client1, { status: "RESOLVED", resolvedAt: new Date(Date.now() - 6 * 86_400_000), resolutionNote: "Fixed", handlerId: csr1.id });

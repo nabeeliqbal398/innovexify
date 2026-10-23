@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { CaseStage, CaseStatus, NoteVisibility, Priority } from "@prisma/client";
 import { Transform, Type } from "class-transformer";
-import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from "class-validator";
+import { IsBoolean, IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from "class-validator";
 
 import { FORMATION_STATES, LIMITS } from "../../../common/constants/formation";
 import { PaginationQueryDto } from "../../../common/pagination/pagination.dto";
@@ -65,6 +65,31 @@ export class ListCasesQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIsoDate({ message: "deadlineTo must be a real date as YYYY-MM-DD." })
   deadlineTo?: string;
+
+  @ApiPropertyOptional({ description: 'The client\'s CSR id, or "none" for clients without a CSR.' })
+  @IsOptional()
+  @Transform(trim)
+  @IsString({ message: "csrId must be a CSR id, or none." })
+  @MaxLength(40, { message: "csrId is too long." })
+  csrId?: string;
+
+  @ApiPropertyOptional({ description: "The client's formation state." })
+  @IsOptional()
+  @Transform(trim)
+  @IsString({ message: "state must be a state name." })
+  @MaxLength(40, { message: "state is too long." })
+  state?: string;
+
+  @ApiPropertyOptional({ description: "true: only cases that are not finished and whose target date has passed (by the server's date)." })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => (value === "true" ? true : value === "false" ? false : value))
+  @IsBoolean({ message: "overdue must be true or false." })
+  overdue?: boolean;
+
+  @ApiPropertyOptional({ example: "2026-09-01", description: "Opened on or after this day." })
+  @IsOptional()
+  @IsIsoDate({ message: "openedFrom must be a real date as YYYY-MM-DD." })
+  openedFrom?: string;
 }
 
 export class CreateCaseDto {
@@ -200,7 +225,7 @@ export class CaseDto {
   @ApiProperty({ nullable: true, example: "2026-12-31" }) deadline!: string | null;
   @ApiProperty() filingConfirmation!: string;
   @ApiProperty() service!: { id: string; name: string };
-  @ApiProperty() client!: { id: string; name: string; email: string; caseNumber: string; businessName: string; formationState: string };
+  @ApiProperty() client!: { id: string; name: string; email: string; caseNumber: string; businessName: string; formationState: string; csr: { id: string; name: string } | null };
   @ApiProperty({ nullable: true, type: PersonRefDto }) owner!: PersonRefDto | null;
   @ApiProperty({ nullable: true }) completedAt!: Date | null;
   @ApiProperty() lastActivityAt!: Date;

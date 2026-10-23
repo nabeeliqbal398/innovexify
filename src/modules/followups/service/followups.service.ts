@@ -24,13 +24,15 @@ import type {
   InteractionDto,
   ListFollowUpsQueryDto,
   ListInteractionsQueryDto,
+  ListRecentInteractionsQueryDto,
+  RecentInteractionDto,
   UpdateFollowUpDto,
 } from "../dto/followups.dto";
 import { FollowUpsRepository, type ClientForFollowUp, type FollowUpRecord, type InteractionRecord } from "../repository/followups.repository";
 
 type Db = Prisma.TransactionClient;
 
-const SORT_FIELDS = ["due", "createdAt", "status"] as const;
+const SORT_FIELDS = ["due", "createdAt", "status", "doneAt"] as const;
 const KIND_LABEL = { CALL: "call", EMAIL: "email", PORTAL_MESSAGE: "portal message", MEETING: "meeting" } as const;
 
 export function toFollowUpDto(f: FollowUpRecord, today: Date = todayUtc()): FollowUpDto {
@@ -168,6 +170,21 @@ export class FollowUpsService {
     parseSort(query, ["at"], { field: "at", order: "desc" });
     const order = query.order ?? "desc";
     return paginate(query, ({ skip, take }) => this.repo.interactionPage(client.id, order, skip, take), toInteractionDto);
+  }
+
+  /**
+   * The newest interactions across the clients the caller may see (a CSR: their own clients; Admin and Manager: all), for the
+   * follow-up center. `clientId` narrows it to one client, still inside that scope.
+   */
+  async recentInteractions(c: ActorContext, query: ListRecentInteractionsQueryDto): Promise<PaginatedResponse<RecentInteractionDto>> {
+    const where: Prisma.InteractionWhereInput = {
+      AND: [{ client: { is: { AND: [{ role: "CLIENT" }, clientScope(c.actor)] } } }, ...(query.clientId ? [{ clientId: query.clientId }] : [])],
+    };
+    return paginate(
+      query,
+      ({ skip, take }) => this.repo.recentInteractions(where, skip, take),
+      (i) => ({ ...toInteractionDto(i), client: { id: i.client.id, name: i.client.name, caseNumber: i.client.clientProfile?.caseNumber ?? "" } }),
+    );
   }
 
   async addInteraction(c: ActorContext, clientId: string, dto: CreateInteractionDto): Promise<InteractionDto> {

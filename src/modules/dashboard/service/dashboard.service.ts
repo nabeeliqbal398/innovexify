@@ -3,6 +3,7 @@ import { Injectable } from "@nestjs/common";
 import type { ActorContext } from "../../../common/interfaces/actor-context";
 import { addDays, isoDay, todayUtc } from "../../../common/utils/dates";
 import { AnalyticsRepository } from "../../analytics/repository/analytics.repository";
+import { MessagesService } from "../../messages/service/messages.service";
 import type { AttentionItem, DashboardOverview, DeadlineItem, Kpi, WorkloadRow } from "../dto/dashboard.dto";
 import { DashboardRepository } from "../repository/dashboard.repository";
 
@@ -25,7 +26,30 @@ export class DashboardService {
   constructor(
     private readonly repo: DashboardRepository,
     private readonly analytics: AnalyticsRepository,
+    private readonly messages: MessagesService,
   ) {}
+
+  /**
+   * The number on each navigation item, keyed by the view's name. A view the caller's role does not have counts 0.
+   * Messages are unread messages in the conversations they can see (`cmsgs` is the client's own thread).
+   */
+  async navCounts(c: ActorContext): Promise<Record<"messages" | "cmsgs" | "documents" | "tickets" | "reports" | "followups" | "tasks", number>> {
+    const a = { id: c.actor.id, role: c.actor.role };
+    const today = todayUtc();
+    const role = c.actor.role;
+    const isClient = role === "CLIENT";
+    const seesTasks = role === "ADMIN" || role === "MANAGER";
+    const seesFollowUps = seesTasks || role === "CSR";
+    const [unread, documents, tickets, reports, followups, tasks] = await Promise.all([
+      this.messages.unreadCount(c),
+      isClient ? Promise.resolve(0) : this.repo.documents(a, { status: "SUBMITTED" }),
+      isClient ? Promise.resolve(0) : this.repo.openTickets(a),
+      role === "COMPLIANCE" ? this.repo.reports(a, { status: "SUBMITTED" }) : Promise.resolve(0),
+      seesFollowUps ? this.repo.followUps(a, { status: "OPEN", due: { lte: today } }) : Promise.resolve(0),
+      seesTasks ? this.repo.tasks(a, { done: false, due: { lt: today } }) : Promise.resolve(0),
+    ]);
+    return { messages: isClient ? 0 : unread.unread, cmsgs: isClient ? unread.unread : 0, documents, tickets, reports, followups, tasks };
+  }
 
   async overview(c: ActorContext): Promise<DashboardOverview> {
     const base = { role: c.actor.role, generatedAt: new Date().toISOString() };

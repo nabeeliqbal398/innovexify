@@ -5,3 +5,4 @@ dist
 # Local file storage at the project root only: src/common/storage is source code.
 /storage
 /uploads
+*.jsonl

@@ -1,3 +1,5 @@
+import { appendFile } from "node:fs/promises";
+
 import { Global, Injectable, Logger, Module } from "@nestjs/common";
 
 export interface MailMessage {
@@ -20,14 +22,18 @@ export abstract class MailService {
   abstract send(message: MailMessage): Promise<void>;
 }
 
-/** Development stand-in: writes the email to the application log and sends nothing. */
+/**
+ * Development stand-in: writes the email to the application log and sends nothing. When MAIL_OUTBOX_FILE is set (never in
+ * production) each message is also appended to that file as one JSON line, so a browser test can read an invitation link.
+ */
 @Injectable()
 export class LogMailService extends MailService {
   private readonly logger = new Logger("Mail");
 
-  send(message: MailMessage): Promise<void> {
+  async send(message: MailMessage): Promise<void> {
     this.logger.log(`[email not sent: LogMailService] ${message.kind}${message.template ? ` (${message.template})` : ""} to ${message.to}\nSubject: ${message.subject}\n${message.text}`);
-    return Promise.resolve();
+    const outbox = process.env.MAIL_OUTBOX_FILE;
+    if (outbox && process.env.NODE_ENV !== "production") await appendFile(outbox, `${JSON.stringify({ at: new Date().toISOString(), ...message })}\n`);
   }
 }
 

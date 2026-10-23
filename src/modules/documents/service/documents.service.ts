@@ -102,6 +102,8 @@ export class DocumentsService {
         documentScope(c.actor),
         ...(query.clientId ? [{ clientId: query.clientId }] : []),
         ...(query.status ? [{ status: query.status }] : []),
+        ...(query.group === "submissions" ? [{ status: { notIn: ["REQUESTED", "SHARED"] as DocStatus[] } }] : []),
+        ...(query.group === "outstanding" ? [{ status: { in: ["REQUESTED", "REJECTED"] as DocStatus[] } }] : []),
         ...(query.type ? [{ type: query.type }] : []),
         ...(search
           ? [

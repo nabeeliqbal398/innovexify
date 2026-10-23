@@ -4,6 +4,10 @@
 The numbers each role lands on. `GET /api/v1/dashboard/overview` (any signed-in user) returns one shape for every role:
 `{ role, generatedAt, kpis: [{ key, value, detail? }], ...sections }`. The server returns numbers and ids; wording, colours and links are the screen's.
 
+## Navigation counts
+`GET /api/v1/dashboard/nav-counts` returns the number on each navigation item, keyed by view: `messages` (unread messages in the conversations the caller can see; staff), `cmsgs` (a client's own unread),
+`documents` (submitted, awaiting review), `tickets` (open), `reports` (Compliance: submitted), `followups` (open and due today or earlier; Admin, Manager, CSR) and `tasks` (overdue; Admin and Manager). A view the role does not have is 0.
+
 ## How it is computed
 Each figure is a `COUNT` or `GROUP BY` in the database under the caller's data scope: the Prisma scope helpers (`caseScope`, `taskScope`,
 `documentScope`, `ticketScope`, ...) for counts, and their SQL twins in `common/scope/scope-sql.ts` for the date-bucketed trends. Nothing is

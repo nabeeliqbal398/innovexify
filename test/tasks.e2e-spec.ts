@@ -373,6 +373,16 @@ describe("tasks (e2e)", () => {
       done = await makeTask(t.prisma, { caseId: case1.id, createdById: admin.id, assigneeId: csr1.id, title: "Finished long ago", due: dayOffset(-10), done: true });
     });
 
+    it("filters upcoming (open, after today) and a due-date range, and validates the range", async () => {
+      expect((await ids(admin, "?filter=upcoming")).sort()).toEqual([soon.id, later.id].sort());
+      expect((await ids(admin, `?dueFrom=${dayOffset(-3)}&dueTo=${dayOffset(0)}&sort=due`))).toEqual([overdue.id, today.id]);
+      expect((await ids(admin, `?dueFrom=${dayOffset(20)}`))).toEqual([later.id]);
+      const bad = await as(admin).get(`/api/v1/tasks?dueFrom=${dayOffset(3)}&dueTo=${dayOffset(1)}`);
+      expect(bad.status).toBe(422);
+      expect(bad.body.errors).toEqual([{ field: "dueTo", message: "dueTo can't be before dueFrom." }]);
+      expect((await as(admin).get("/api/v1/tasks?dueFrom=soon")).body.errors[0].field).toBe("dueFrom");
+    });
+
     it("filters overdue, today, week and mine from the server's date", async () => {
       expect(await ids(admin, "?filter=overdue")).toEqual([overdue.id]); // a done task is never overdue
       expect(await ids(admin, "?filter=today")).toEqual([today.id]);

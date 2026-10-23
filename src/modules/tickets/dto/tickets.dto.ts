@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Priority, Role, TicketCategory, TicketStatus } from "@prisma/client";
 import { Transform, Type } from "class-transformer";
-import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from "class-validator";
+import { IsBoolean, IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from "class-validator";
 
 import { PaginationQueryDto } from "../../../common/pagination/pagination.dto";
 
@@ -9,7 +9,14 @@ const trim = ({ value }: { value: unknown }): unknown => (typeof value === "stri
 const toBoolean = ({ value }: { value: unknown }): unknown => (value === "true" ? true : value === "false" ? false : value);
 const VERSION_MESSAGE = "Send the version you loaded (version), so we can tell if someone else changed the ticket since.";
 
+export const TICKET_GROUPS = ["active", "finished"] as const;
+
 export class ListTicketsQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ enum: TICKET_GROUPS, description: "active: not yet resolved or closed. finished: resolved or closed." })
+  @IsOptional()
+  @IsIn(TICKET_GROUPS, { message: "group must be active or finished." })
+  group?: (typeof TICKET_GROUPS)[number];
+
   @ApiPropertyOptional({ enum: TicketStatus })
   @IsOptional()
   @IsEnum(TicketStatus, { message: `status must be one of: ${Object.values(TicketStatus).join(", ")}.` })
@@ -185,6 +192,7 @@ export class TicketDto {
   @ApiProperty({ enum: TicketStatus }) status!: TicketStatus;
   @ApiProperty() statusLabel!: string;
   @ApiProperty({ description: "Optimistic-lock version: send it back with a status change." }) version!: number;
+  @ApiProperty({ enum: TicketStatus, isArray: true, description: "The statuses you may move it to right now: for staff the workflow's next steps, for a client Closed (confirm) and Open (reopen) only while it is Resolved and inside the reopen window." }) allowedStatuses!: TicketStatus[];
   @ApiProperty() client!: { id: string; name: string; caseNumber: string };
   @ApiProperty({ nullable: true }) handler!: { id: string; name: string } | null;
   @ApiProperty({ nullable: true }) case!: { id: string; displayNumber: string } | null;

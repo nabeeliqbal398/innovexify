@@ -28,5 +28,6 @@ COPY --chown=node:node package.json ./
 RUN mkdir -p /app/storage && chown node:node /app/storage
 USER node
 EXPOSE 4000
-# Apply pending migrations (never `db push`), then start. A failed migration stops the container instead of serving a broken schema.
-CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node dist/main.js"]
+# Apply pending migrations before starting, unless MIGRATE_ON_START=false (run `prisma migrate deploy` as its own release step instead,
+# which is what you want with more than one instance). Never `db push`. A failed migration stops the container instead of serving a broken schema.
+CMD ["sh", "-c", "if [ \"${MIGRATE_ON_START:-true}\" != \"false\" ]; then node node_modules/prisma/build/index.js migrate deploy || exit 1; fi; exec node dist/main.js"]

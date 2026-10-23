@@ -25,6 +25,12 @@ export class ListUsersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(UserStatus, { message: `status must be one of: ${Object.values(UserStatus).join(", ")}.` })
   status?: UserStatus;
+
+  @ApiPropertyOptional({ description: "true: staff only (everyone who is not a client). Ignored when `role` is given." })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => (value === "true" ? true : value === "false" ? false : value))
+  @IsBoolean({ message: "staff must be true or false." })
+  staff?: boolean;
 }
 
 export class InviteUserDto {
@@ -109,6 +115,16 @@ export class UpdateNotificationPreferencesDto {
   preferences!: NotificationPreferenceItemDto[];
 }
 
+export class StaffWorkloadDto {
+  @ApiProperty({ description: "Clients assigned to them (CSRs)." }) clients!: number;
+  @ApiProperty({ description: "Unfinished cases: those of their clients plus those they own." }) cases!: number;
+  @ApiProperty() openTasks!: number;
+  @ApiProperty() overdueTasks!: number;
+  @ApiProperty() openFollowUps!: number;
+  @ApiProperty({ description: "Open tickets they handle." }) openTickets!: number;
+  @ApiProperty({ description: "Documents they reviewed in the last 30 days." }) reviewsLast30Days!: number;
+}
+
 export class UserDto {
   @ApiProperty() id!: string;
   @ApiProperty() email!: string;
@@ -116,7 +132,10 @@ export class UserDto {
   @ApiProperty({ enum: Role }) role!: Role;
   @ApiProperty({ enum: UserStatus }) status!: UserStatus;
   @ApiProperty({ nullable: true }) invitedById!: string | null;
+  @ApiProperty({ nullable: true }) invitedByName!: string | null;
   @ApiProperty({ nullable: true }) lastLoginAt!: Date | null;
+  @ApiPropertyOptional({ nullable: true, description: "Staff only, on the list and the detail: the latest allowed action in the audit log." }) lastActivityAt?: Date | null;
+  @ApiPropertyOptional({ type: StaffWorkloadDto, description: "Staff only, on the list and the detail." }) workload?: StaffWorkloadDto;
   @ApiProperty({ nullable: true, description: "Clients only: their case ID, such as CASE-2026-0042." }) caseNumber!: string | null;
   @ApiProperty() createdAt!: Date;
   @ApiProperty() updatedAt!: Date;
@@ -126,4 +145,17 @@ export class NotificationPreferenceDto {
   @ApiProperty({ enum: NotificationCategory }) category!: NotificationCategory;
   @ApiProperty() email!: boolean;
   @ApiProperty() inApp!: boolean;
+}
+
+export class DirectoryQueryDto {
+  @ApiPropertyOptional({ enum: ["ADMIN", "MANAGER", "CSR", "COMPLIANCE"], description: "Only people with this role." })
+  @IsOptional()
+  @IsIn(["ADMIN", "MANAGER", "CSR", "COMPLIANCE"], { message: "role must be one of: ADMIN, MANAGER, CSR, COMPLIANCE." })
+  role?: "ADMIN" | "MANAGER" | "CSR" | "COMPLIANCE";
+}
+
+export class DirectoryEntryDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ enum: ["ADMIN", "MANAGER", "CSR", "COMPLIANCE"] }) role!: "ADMIN" | "MANAGER" | "CSR" | "COMPLIANCE";
 }

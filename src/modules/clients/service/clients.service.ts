@@ -18,13 +18,15 @@ import type { ActorContext } from "../../../common/interfaces/actor-context";
 import { NotificationService } from "../../../common/notifications/notification.service";
 import { paginate, parseSort } from "../../../common/pagination/paginate";
 import { AccessService } from "../../../common/permissions/access.service";
+import { can, REASON } from "../../../common/permissions/permissions";
 import type { PaginatedResponse } from "../../../common/responses/api-response";
 import { clientScope } from "../../../common/scope/scope";
+import { todayUtc } from "../../../common/utils/dates";
 import { dateOnly, formatDateOnly } from "../../../common/validators/iso-date";
 import { InvitationService } from "../../auth/service/invitation.service";
-import type { CaseBriefDto, ChangeCsrDto, ClientDetailDto, CreatedClientDto, ClientDto, CreateClientDto, ListClientsQueryDto, UpdateClientProfileDto } from "../dto/clients.dto";
+import type { TimelineEntryDto, TimelineQueryDto, CaseBriefDto, ChangeCsrDto, ClientDetailDto, CreatedClientDto, ClientDto, CreateClientDto, ListClientsQueryDto, UpdateClientProfileDto } from "../dto/clients.dto";
 import { CLIENT_SORT_FIELDS, type ClientRecord } from "../interfaces/clients.interfaces";
-import { ClientsRepository } from "../repository/clients.repository";
+import { ClientsRepository, type ClientExtras } from "../repository/clients.repository";
 
 const DEFAULT_SERVICE = "llc";
 /** Fields a client may change about themselves. Business name and formation state are set by the team. */
@@ -45,7 +47,16 @@ export const toCaseBrief = (c: CaseBrief): CaseBriefDto => ({
   lastActivityAt: c.lastActivityAt,
 });
 
-function toClientDto(client: ClientRecord): ClientDto {
+const extrasOf = (e: ClientExtras | undefined): Pick<ClientDto, "lastContactAt" | "nextFollowUp" | "onboarding"> =>
+  e
+    ? {
+        lastContactAt: e.lastContactAt,
+        nextFollowUp: e.nextFollowUp ? { id: e.nextFollowUp.id, due: formatDateOnly(e.nextFollowUp.due) as string, type: e.nextFollowUp.type } : null,
+        onboarding: e.onboarding,
+      }
+    : {};
+
+function toClientDto(client: ClientRecord, extras?: ClientExtras): ClientDto {
   const profile = client.clientProfile;
   const latest = client.clientCases[0];
   return {
@@ -62,13 +73,14 @@ function toClientDto(client: ClientRecord): ClientDto {
     joinedAt: profile?.joinedAt ?? null,
     createdAt: client.createdAt,
     case: latest ? toCaseBrief(latest) : null,
+    ...extrasOf(extras),
   };
 }
 
-function toClientDetail(client: ClientRecord): ClientDetailDto {
+function toClientDetail(client: ClientRecord, extras?: ClientExtras): ClientDetailDto {
   const cases = client.clientCases.map(toCaseBrief);
   return {
-    ...toClientDto(client),
+    ...toClientDto(client, extras),
     address: client.clientProfile?.address ?? "",
     preferredName: client.clientProfile?.preferredName ?? "",
     cases,
@@ -115,6 +127,7 @@ export class ClientsService {
       AND: [
         { role: "CLIENT" },
         clientScope(c.actor, { includeRemoved: query.status === "REMOVED" }),
+        ...this.filterClause(c, query.filter),
         ...(query.status ? [{ status: query.status }] : []),
         ...(Object.keys(profileFilter).length ? [{ clientProfile: { is: profileFilter } }] : []),
         ...(search
@@ -136,11 +149,94 @@ export class ClientsService {
       (profileSort as readonly string[]).includes(sort.field) ? { clientProfile: { [sort.field]: sort.order } } : { [sort.field]: sort.order },
       { id: "asc" },
     ];
-    return paginate(query, ({ skip, take }) => this.repo.page(where, orderBy, skip, take), toClientDto);
+    return paginate(
+      query,
+      async ({ skip, take }) => {
+        const [rows, total] = await this.repo.page(where, orderBy, skip, take);
+        const extras = await this.repo.extras(c.actor, rows.map((r) => r.id));
+        return [rows.map((r) => ({ client: r, extras: extras.get(r.id) })), total] as [Array<{ client: ClientRecord; extras: ClientExtras | undefined }>, number];
+      },
+      (row) => toClientDto(row.client, row.extras),
+    );
+  }
+
+  /** The table's quick filters. "due" only counts follow-ups the caller may see (a CSR's own; none for Compliance). */
+  private filterClause(c: ActorContext, filter: ListClientsQueryDto["filter"]): Prisma.UserWhereInput[] {
+    if (filter === "invited") return [{ status: "INVITED" }];
+    if (filter === "waiting") {
+      return [
+        {
+          OR: [
+            { documents: { some: { status: { in: ["REQUESTED", "REJECTED", "INFO"] }, deletedAt: null } } },
+            { clientCases: { some: { status: "AWAITING_CLIENT", deletedAt: null } } },
+          ],
+        },
+      ];
+    }
+    if (filter === "due") {
+      const mine = c.actor.role === "ADMIN" || c.actor.role === "MANAGER" ? {} : c.actor.role === "CSR" ? { csrId: c.actor.id } : { id: "__none__" };
+      return [{ followUpsAsClient: { some: { status: "OPEN", due: { lte: todayUtc() }, ...mine } } }];
+    }
+    return [];
   }
 
   async get(c: ActorContext, id: string): Promise<ClientDetailDto> {
-    return toClientDetail(await this.requireInScope(c, id));
+    const client = await this.requireInScope(c, id);
+    return toClientDetail(client, (await this.repo.extras(c.actor, [client.id])).get(client.id));
+  }
+
+  /**
+   * One timeline for a client, newest first, assembled from the case events, document history, tickets, messages and (for
+   * Admin, Manager and CSR only) interactions, completed follow-ups and the invitation. A CSR never reads a document's reasons
+   * or notes. Clients and anyone outside the client's scope are refused (404 outside the scope, 403 for a client).
+   */
+  async timeline(c: ActorContext, id: string, query: TimelineQueryDto): Promise<TimelineEntryDto[]> {
+    if (c.actor.role === "CLIENT") throw new PermissionDeniedException(REASON.viewClients);
+    const client = await this.requireInScope(c, id);
+    const limit = query.limit ?? 40;
+    const relationship = query.relationship !== false && can(c.actor, "followups", { csr: client.clientProfile?.csrId ?? null });
+    const src = await this.repo.timelineSources(client.id, limit, relationship);
+    const who = (p: { id: string; name: string; role: string } | null | undefined) => (p ? { id: p.id, name: p.name, role: p.role } : null);
+    const showDocNotes = c.actor.role !== "CSR";
+    const out: TimelineEntryDto[] = [];
+
+    for (const e of src.caseEvents) {
+      out.push({ id: `case-${e.id}`, kind: "CASE", subKind: e.toStage, text: e.toStage ? `Stage -> ${e.toStage}` : e.note, note: e.toStage ? e.note : "", actor: who(e.by), at: e.at });
+    }
+    for (const e of src.documentEvents) {
+      out.push({
+        id: `doc-${e.id}`,
+        kind: "DOCUMENT",
+        subKind: e.status,
+        text: e.document.name,
+        note: showDocNotes && e.note && e.status !== "SUBMITTED" ? e.note : "",
+        actor: who(e.by),
+        at: e.at,
+      });
+    }
+    for (const t of src.tickets) {
+      out.push({ id: `ticket-${t.id}`, kind: "TICKET", subKind: t.status, text: `TKT-${t.number} - ${t.title}`, note: "", actor: who(t.client), at: t.createdAt });
+    }
+    for (const m of src.messages) {
+      out.push({ id: `msg-${m.id}`, kind: "MESSAGE", subKind: null, text: m.text.length > 90 ? `${m.text.slice(0, 90)}...` : m.text, note: "", actor: who(m.sender), at: m.createdAt });
+    }
+    for (const i of src.interactions) out.push({ id: `int-${i.id}`, kind: "INTERACTION", subKind: i.kind, text: i.text, note: "", actor: who(i.by), at: i.at });
+    for (const f of src.followUps) {
+      out.push({ id: `fu-${f.id}`, kind: "FOLLOW_UP", subKind: f.type, text: f.outcome || f.note, note: "", actor: who(f.csr), at: f.doneAt as Date });
+    }
+    if (relationship && src.client) {
+      const joined = src.client.clientProfile?.joinedAt ?? null;
+      out.push({
+        id: "invitation",
+        kind: "INVITATION",
+        subKind: src.client.status,
+        text: src.client.status === "INVITED" ? "Invitation sent, not accepted yet" : `Invitation accepted - account ${src.client.status.toLowerCase()}`,
+        note: "",
+        actor: { id: src.client.id, name: src.client.name, role: "CLIENT" },
+        at: joined ?? src.client.createdAt,
+      });
+    }
+    return out.sort((a, b) => b.at.getTime() - a.at.getTime() || a.id.localeCompare(b.id)).slice(0, limit);
   }
 
   // ---- create -------------------------------------------------------------------------------------------------

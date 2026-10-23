@@ -34,6 +34,80 @@ describe("users (e2e)", () => {
 
   const as = (user: { id: string; role: Parameters<typeof bearerFor>[1]["role"] }) => api(t, bearerFor(t, user));
 
+  describe("staff workload and activity on the list and detail", () => {
+    it("counts each person's workload and latest allowed action, worked out by hand", async () => {
+      const client = await makeUser(t.prisma, { email: "client@test.dev", name: "Alex Client", role: "CLIENT", csrId: csr1.id });
+      const owned = await makeCase(t.prisma, { clientId: client.id, ownerId: compliance.id });
+      const done = await makeUser(t.prisma, { email: "done@test.dev", name: "Dana Done", role: "CLIENT", csrId: csr1.id });
+      await makeCase(t.prisma, { clientId: done.id, stage: "COMPLETED", status: "COMPLETED" });
+      const task = (data: Record<string, unknown>) =>
+        t.prisma.task.create({ data: { caseId: owned.id, title: "t", type: "OPERATIONS", createdById: admin.id, assigneeId: csr1.id, due: new Date("2099-01-01"), ...data } as never });
+      await task({ due: new Date("2020-01-01") });
+      await task({});
+      await task({ done: true, completedAt: new Date() });
+      await t.prisma.followUp.create({ data: { clientId: client.id, csrId: csr1.id, type: "CALL", due: new Date("2099-01-01"), note: "n" } });
+      await t.prisma.followUp.create({ data: { clientId: client.id, csrId: csr1.id, type: "CALL", due: new Date("2026-01-01"), note: "n", status: "DONE", doneAt: new Date() } });
+      await t.prisma.ticket.create({ data: { number: 5001, clientId: client.id, title: "T", category: "GENERAL_REQUEST", description: "d", status: "OPEN", handlerId: csr1.id } });
+      await t.prisma.ticket.create({ data: { number: 5002, clientId: client.id, title: "T", category: "GENERAL_REQUEST", description: "d", status: "RESOLVED", handlerId: csr1.id, resolvedAt: new Date() } });
+      const day = 86_400_000;
+      await t.prisma.document.create({ data: { clientId: client.id, name: "A", status: "APPROVED", reviewedById: compliance.id, reviewedAt: new Date(Date.now() - 10 * day) } });
+      await t.prisma.document.create({ data: { clientId: client.id, name: "B", status: "APPROVED", reviewedById: compliance.id, reviewedAt: new Date(Date.now() - 40 * day) } });
+      await t.prisma.auditLog.create({ data: { actorId: csr1.id, action: "Did a thing", target: "x", ok: true, createdAt: new Date("2026-05-01T10:00:00.000Z") } });
+      await t.prisma.auditLog.create({ data: { actorId: csr1.id, action: "Refused thing", target: "x", ok: false, createdAt: new Date("2026-06-01T10:00:00.000Z") } });
+
+      const list = await as(admin).get("/api/v1/users?role=CSR&search=Cora");
+      expect(list.body.data[0]).toMatchObject({
+        name: "Cora CSR",
+        lastActivityAt: "2026-05-01T10:00:00.000Z", // the refused attempt is not an activity
+        workload: { clients: 2, cases: 1, openTasks: 2, overdueTasks: 1, openFollowUps: 1, openTickets: 1, reviewsLast30Days: 0 },
+      });
+      const comp = (await as(admin).get(`/api/v1/users/${compliance.id}`)).body.data;
+      expect(comp.workload).toMatchObject({ clients: 0, cases: 1, openTasks: 0, reviewsLast30Days: 1 });
+      expect(comp.lastActivityAt).toBeNull();
+      // Clients carry neither.
+      const clients = await as(admin).get("/api/v1/users?role=CLIENT");
+      for (const c of clients.body.data) expect(c).not.toHaveProperty("workload");
+    });
+
+    it("lists only staff with staff=true", async () => {
+      await makeUser(t.prisma, { email: "client@test.dev", name: "Alex Client", role: "CLIENT", csrId: csr1.id });
+      const res = await as(admin).get("/api/v1/users?staff=true&limit=100");
+      expect(res.body.data.map((u: { role: string }) => u.role)).not.toContain("CLIENT");
+      expect(res.body.meta.total).toBe(5);
+      expect((await as(admin).get("/api/v1/users?staff=maybe")).body.errors[0].field).toBe("staff");
+    });
+
+    it("names who invited each person", async () => {
+      await as(admin).post("/api/v1/users").send({ email: "invitee@test.dev", name: "Ivy Invitee", role: "CSR" });
+      const res = await as(manager).get("/api/v1/users?search=Ivy");
+      expect(res.body.data[0]).toMatchObject({ invitedById: admin.id, invitedByName: "Ada Admin" });
+    });
+  });
+
+  describe("directory", () => {
+    it("lists active staff by name for any staff member, with no emails, and never clients", async () => {
+      await makeUser(t.prisma, { email: "client@test.dev", name: "Alex Client", role: "CLIENT", csrId: csr1.id });
+      await makeUser(t.prisma, { email: "gone@test.dev", name: "Gone Person", role: "CSR", status: "SUSPENDED" });
+      for (const who of [admin, manager, csr1, compliance]) {
+        const res = await as(who).get("/api/v1/users/directory");
+        expect(res.status).toBe(200);
+        expect(res.body.data.map((u: { name: string }) => u.name)).toEqual(["Ada Admin", "Carl CSR", "Cleo Compliance", "Cora CSR", "Max Manager"]);
+        expect(Object.keys(res.body.data[0]).sort()).toEqual(["id", "name", "role"]);
+      }
+    });
+
+    it("filters by role, refuses clients and bad roles", async () => {
+      const csrs = await as(csr1).get("/api/v1/users/directory?role=CSR");
+      expect(csrs.body.data.map((u: { name: string }) => u.name)).toEqual(["Carl CSR", "Cora CSR"]);
+      const client = await makeUser(t.prisma, { email: "client@test.dev", name: "Alex Client", role: "CLIENT", csrId: csr1.id });
+      expect((await as(client).get("/api/v1/users/directory")).status).toBe(403);
+      expect((await api(t).get("/api/v1/users/directory")).status).toBe(401);
+      const bad = await as(admin).get("/api/v1/users/directory?role=CLIENT");
+      expect(bad.status).toBe(422);
+      expect(bad.body.errors[0].field).toBe("role");
+    });
+  });
+
   describe("invitation flow", () => {
     it("invites, accepts and signs in, end to end", async () => {
       const invite = await as(admin).post("/api/v1/users").send({ email: "New.CSR@Test.dev", name: "Nina New", role: "CSR", note: "Welcome aboard" });

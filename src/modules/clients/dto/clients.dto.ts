@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { CaseStage, CaseStatus, ContactPreference, Priority, UserStatus } from "@prisma/client";
-import { Transform } from "class-transformer";
-import { IsEmail, IsEnum, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, ValidateIf } from "class-validator";
+import { Transform, Type } from "class-transformer";
+import { IsBoolean, IsEmail, IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateIf } from "class-validator";
 
 import { FORMATION_STATES, LIMITS, PHONE_MESSAGE, PHONE_PATTERN } from "../../../common/constants/formation";
 import { PaginationQueryDto } from "../../../common/pagination/pagination.dto";
@@ -11,6 +11,9 @@ const trim = ({ value }: { value: unknown }): unknown => (typeof value === "stri
 const lower = ({ value }: { value: unknown }): unknown => (typeof value === "string" ? value.trim().toLowerCase() : value);
 
 const STATE_MESSAGE = `Choose a formation state: ${FORMATION_STATES.join(", ")}.`;
+
+export const CLIENT_FILTERS = ["due", "invited", "waiting"] as const;
+export type ClientFilter = (typeof CLIENT_FILTERS)[number];
 
 export class ListClientsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ description: "Matches name, email, business name or case ID." })
@@ -38,6 +41,11 @@ export class ListClientsQueryDto extends PaginationQueryDto {
   @IsString({ message: "state must be a state name." })
   @MaxLength(40, { message: "state is too long." })
   state?: string;
+
+  @ApiPropertyOptional({ enum: CLIENT_FILTERS, description: "due: has an open follow-up due today or earlier (that you can see). invited: invitation not accepted yet. waiting: owes the team a document or has a case waiting on them." })
+  @IsOptional()
+  @IsIn(CLIENT_FILTERS, { message: `filter must be one of: ${CLIENT_FILTERS.join(", ")}.` })
+  filter?: ClientFilter;
 }
 
 export class CreateClientDto {
@@ -168,6 +176,46 @@ export class CaseBriefDto {
   @ApiProperty() lastActivityAt!: Date;
 }
 
+export class TimelineQueryDto {
+  @ApiPropertyOptional({ default: true, description: "true: include the relationship entries (interactions, completed follow-ups, the invitation). Only Admin, Manager and CSR ever get them." })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => (value === "true" ? true : value === "false" ? false : value))
+  @IsBoolean({ message: "relationship must be true or false." })
+  relationship?: boolean;
+
+  @ApiPropertyOptional({ default: 40, description: "How many of the newest entries to return, 1 to 100." })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: "limit must be a whole number." })
+  @Min(1, { message: "limit must be 1 or greater." })
+  @Max(100, { message: "limit can't be more than 100." })
+  limit?: number;
+}
+
+export const TIMELINE_KINDS = ["CASE", "DOCUMENT", "TICKET", "MESSAGE", "INTERACTION", "FOLLOW_UP", "INVITATION"] as const;
+export type TimelineKind = (typeof TIMELINE_KINDS)[number];
+
+export class TimelineEntryDto {
+  @ApiProperty() id!: string;
+  @ApiProperty({ enum: TIMELINE_KINDS }) kind!: TimelineKind;
+  @ApiProperty({ nullable: true, description: "For an interaction: CALL, EMAIL, PORTAL_MESSAGE or MEETING. For a document: its status key." }) subKind!: string | null;
+  @ApiProperty() text!: string;
+  @ApiProperty({ description: "A reason or remark. Empty when the viewer may not read it." }) note!: string;
+  @ApiProperty({ nullable: true }) actor!: { id: string; name: string; role: string } | null;
+  @ApiProperty() at!: Date;
+}
+
+export class ClientExtrasDto {
+  @ApiProperty({ nullable: true, description: "The latest time the team reached the client: a staff message, a recorded interaction or a completed follow-up." })
+  lastContactAt!: Date | null;
+
+  @ApiProperty({ nullable: true, description: "The earliest open follow-up you can see for this client. Always null for Compliance." })
+  nextFollowUp!: { id: string; due: string; type: string } | null;
+
+  @ApiProperty({ description: "Five onboarding steps: accepted the invitation, gave contact details, has a case, case at document review or later, owes no documents." })
+  onboarding!: { done: number; total: number };
+}
+
 export class ClientDto {
   @ApiProperty() id!: string;
   @ApiProperty() email!: string;
@@ -182,6 +230,9 @@ export class ClientDto {
   @ApiProperty({ nullable: true }) joinedAt!: Date | null;
   @ApiProperty() createdAt!: Date;
   @ApiProperty({ nullable: true, type: CaseBriefDto, description: "The client's current case." }) case!: CaseBriefDto | null;
+  @ApiPropertyOptional({ type: ClientExtrasDto, description: "Present on the list and the detail; not on the response to a create or edit." }) lastContactAt?: Date | null;
+  @ApiPropertyOptional() nextFollowUp?: ClientExtrasDto["nextFollowUp"];
+  @ApiPropertyOptional() onboarding?: ClientExtrasDto["onboarding"];
 }
 
 export class ClientDetailDto extends ClientDto {

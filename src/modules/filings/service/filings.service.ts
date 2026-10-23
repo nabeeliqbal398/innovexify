@@ -45,7 +45,7 @@ export function toFilingDto(f: FilingRecord, today: Date = todayUtc()): FilingDt
     id: f.id,
     number: f.number,
     displayNumber: displayFiling(f.number),
-    case: { id: f.case.id, displayNumber: formatCaseDisplay(f.case.number), client: { id: f.case.client.id, name: f.case.client.name } },
+    case: { id: f.case.id, displayNumber: formatCaseDisplay(f.case.number), client: { id: f.case.client.id, name: f.case.client.name, formationState: f.case.client.clientProfile?.formationState ?? "" } },
     type: f.type,
     status: f.status,
     submittedOn: isoDay(f.submittedOn),

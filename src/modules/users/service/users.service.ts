@@ -26,6 +26,7 @@ import type { PaginatedResponse } from "../../../common/responses/api-response";
 import { clientScope } from "../../../common/scope/scope";
 import { InvitationService } from "../../auth/service/invitation.service";
 import type {
+  DirectoryQueryDto,
   InviteUserDto,
   ListUsersQueryDto,
   NotificationPreferenceDto,
@@ -36,21 +37,24 @@ import type {
   UserDto,
 } from "../dto/users.dto";
 import { USER_SORT_FIELDS, type UserRecord } from "../interfaces/users.interfaces";
-import { UsersRepository } from "../repository/users.repository";
+import { UsersRepository, type StaffExtras } from "../repository/users.repository";
+import { todayUtc } from "../../../common/utils/dates";
 
 type Db = Prisma.TransactionClient;
 
 const ROLE_LABEL: Record<Role, string> = { ADMIN: "Admin", MANAGER: "Manager", CSR: "CSR", COMPLIANCE: "Compliance", CLIENT: "Client" };
 const STATUS_LABEL = { ACTIVE: "Active", INVITED: "Invited", SUSPENDED: "Suspended", REMOVED: "Removed" } as const;
 
-export const toUserDto = (user: UserRecord): UserDto => ({
+export const toUserDto = (user: UserRecord, extras?: StaffExtras): UserDto => ({
   id: user.id,
   email: user.email,
   name: user.name,
   role: user.role,
   status: user.status,
   invitedById: user.invitedById,
+  invitedByName: user.invitedBy?.name ?? null,
   lastLoginAt: user.lastLoginAt,
+  ...(extras ? { lastActivityAt: extras.lastActivityAt, workload: extras.workload } : {}),
   caseNumber: user.clientProfile?.caseNumber ?? null,
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
@@ -74,22 +78,36 @@ export class UsersService {
   // ---- reads --------------------------------------------------------------------------------------------------
 
   /** Admin and Manager only (the route enforces it), so there is no per-record scope: they see every account. */
+  /** Everyone who can be given work: active Admin, Manager, CSR and Compliance users (clients are never listed here). */
+  directory(query: DirectoryQueryDto): Promise<Array<{ id: string; name: string; role: Role }>> {
+    return this.repo.directory(query.role ? [query.role] : ["ADMIN", "MANAGER", "CSR", "COMPLIANCE"]);
+  }
+
   async list(query: ListUsersQueryDto): Promise<PaginatedResponse<UserDto>> {
     const sort = parseSort(query, USER_SORT_FIELDS, { field: "createdAt", order: "desc" });
     const search = query.search?.trim();
     const where: Prisma.UserWhereInput = {
       // Removed accounts are hidden unless you ask for them by status.
       ...(query.status === "REMOVED" ? {} : { deletedAt: null }),
-      ...(query.role ? { role: query.role } : {}),
+      ...(query.role ? { role: query.role } : query.staff ? { role: { not: "CLIENT" as const } } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(search ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { email: { contains: search, mode: "insensitive" } }] } : {}),
     };
     const orderBy: Prisma.UserOrderByWithRelationInput[] = [{ [sort.field]: sort.order }, { id: "asc" }];
-    return paginate(query, ({ skip, take }) => this.repo.page(where, orderBy, skip, take), toUserDto);
+    return paginate(
+      query,
+      async ({ skip, take }) => {
+        const [rows, total] = await this.repo.page(where, orderBy, skip, take);
+        const extras = await this.repo.staffExtras(rows.filter((r) => r.role !== "CLIENT").map((r) => r.id), todayUtc());
+        return [rows.map((user) => ({ user, extras: extras.get(user.id) })), total] as [Array<{ user: UserRecord; extras: StaffExtras | undefined }>, number];
+      },
+      (row) => toUserDto(row.user, row.extras),
+    );
   }
 
   async get(id: string): Promise<UserDto> {
-    return toUserDto(await this.require(id));
+    const user = await this.require(id);
+    return toUserDto(user, user.role === "CLIENT" ? undefined : (await this.repo.staffExtras([user.id], todayUtc())).get(user.id));
   }
 
   // ---- invitations --------------------------------------------------------------------------------------------

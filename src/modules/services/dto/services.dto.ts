@@ -125,4 +125,5 @@ export class ServiceDto {
   @ApiProperty() turnaround!: string;
   @ApiProperty() fee!: string;
   @ApiProperty() active!: boolean;
+  @ApiPropertyOptional({ description: "Staff only, on the list: unfinished cases opened for this service." }) activeCases?: number;
 }

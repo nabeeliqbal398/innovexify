@@ -107,6 +107,15 @@ export class CreateInteractionDto {
 
 export class ListInteractionsQueryDto extends PaginationQueryDto {}
 
+export class ListRecentInteractionsQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ description: "Only this client's." })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value))
+  @IsString({ message: "clientId must be a client id." })
+  @MaxLength(40, { message: "clientId is too long." })
+  clientId?: string;
+}
+
 export class FollowUpDto {
   @ApiProperty() id!: string;
   @ApiProperty() client!: { id: string; name: string; caseNumber: string };
@@ -127,4 +136,8 @@ export class InteractionDto {
   @ApiProperty() text!: string;
   @ApiProperty() by!: { id: string; name: string };
   @ApiProperty() at!: Date;
+}
+
+export class RecentInteractionDto extends InteractionDto {
+  @ApiProperty() client!: { id: string; name: string; caseNumber: string };
 }

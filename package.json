@@ -19,7 +19,8 @@
     "lint": "eslint \"{src,test,prisma}/**/*.ts\"",
     "test": "jest",
     "test:db": "node scripts/setup-test-db.js",
-    "test:e2e": "node scripts/setup-test-db.js && jest --config test/jest-e2e.config.js"
+    "test:e2e": "node scripts/setup-test-db.js && jest --config test/jest-e2e.config.js",
+    "admin:create": "node dist/cli/create-admin.js"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"

@@ -7,6 +7,7 @@ import type { AuthenticatedUser, RequestContext } from "../../../common/interfac
 import { RequirePermission } from "../../../common/permissions/require-permission.decorator";
 import { ApiResponse } from "../../../common/responses/api-response";
 import {
+  DirectoryQueryDto,
   InviteUserDto,
   ListUsersQueryDto,
   UpdateNotificationPreferencesDto,
@@ -29,7 +30,14 @@ export class UsersController {
     return this.users.list(query);
   }
 
-  // The "me" routes are declared before ":id" so "me" is never read as an id.
+  // "directory" and the "me" routes are declared before ":id" so they are never read as an id.
+  @Get("directory")
+  @Roles("ADMIN", "MANAGER", "CSR", "COMPLIANCE")
+  @ApiOperation({ summary: "Active staff by name and role, for choosing an owner, assignee or CSR (any staff; no emails; never clients)" })
+  directory(@Query() query: DirectoryQueryDto) {
+    return this.users.directory(query);
+  }
+
   @Get("me/notification-preferences")
   @ApiOperation({ summary: "Your notification preferences, every category" })
   async myPreferences(@CurrentUser() user: AuthenticatedUser) {

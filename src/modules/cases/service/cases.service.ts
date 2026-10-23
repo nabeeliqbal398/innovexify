@@ -77,6 +77,7 @@ export function toCaseDto(rec: CaseRecord): CaseDto {
       caseNumber: profile?.caseNumber ?? "",
       businessName: profile?.businessName ?? "",
       formationState: profile?.formationState ?? "",
+      csr: profile?.csr ?? null,
     },
     owner: rec.owner,
     completedAt: rec.completedAt,
@@ -134,6 +135,10 @@ export class CasesService {
         ...(query.ownerId ? [{ ownerId: query.ownerId === "none" ? null : query.ownerId }] : []),
         ...(query.clientId ? [{ clientId: query.clientId }] : []),
         ...(query.serviceId ? [{ serviceId: query.serviceId }] : []),
+        ...(query.csrId ? [{ client: { is: { clientProfile: { is: { csrId: query.csrId === "none" ? null : query.csrId } } } } }] : []),
+        ...(query.state ? [{ client: { is: { clientProfile: { is: { formationState: { equals: query.state, mode: "insensitive" as const } } } } } }] : []),
+        ...(query.overdue ? [{ deadline: { lt: todayUtc() } }, { NOT: { OR: [{ stage: "COMPLETED" as const }, { status: "COMPLETED" as const }] } }] : []),
+        ...(query.openedFrom ? [{ createdAt: { gte: dateOnly(query.openedFrom) } }] : []),
         ...(query.deadlineFrom || query.deadlineTo
           ? [{ deadline: { ...(query.deadlineFrom ? { gte: dateOnly(query.deadlineFrom) } : {}), ...(query.deadlineTo ? { lte: dateOnly(query.deadlineTo) } : {}) } }]
           : []),
@@ -155,7 +160,13 @@ export class CasesService {
     };
     // A null deadline sorts last in either direction, so "soonest first" doesn't open with the cases that have none.
     const primary: Prisma.CaseOrderByWithRelationInput =
-      sort.field === "deadline" ? { deadline: { sort: sort.order, nulls: "last" } } : { [sort.field]: sort.order };
+      sort.field === "deadline"
+        ? { deadline: { sort: sort.order, nulls: "last" } }
+        : sort.field === "clientName"
+          ? { client: { name: sort.order } }
+          : sort.field === "formationState"
+            ? { client: { clientProfile: { formationState: sort.order } } }
+            : { [sort.field]: sort.order };
     return paginate(query, ({ skip, take }) => this.repo.page(where, [primary, { id: "asc" }], skip, take), toCaseDto);
   }
 

@@ -14,6 +14,16 @@ export class ServicesRepository {
     return this.prisma.service.findMany({ where: onlyActive ? { active: true } : {}, orderBy: [{ category: "asc" }, { name: "asc" }], select });
   }
 
+  /** Unfinished, not removed cases per service id. */
+  async activeCaseCounts(): Promise<Map<string, number>> {
+    const rows = await this.prisma.case.groupBy({
+      by: ["serviceId"],
+      where: { deletedAt: null, NOT: { OR: [{ stage: "COMPLETED" }, { status: "COMPLETED" }] } },
+      _count: { _all: true },
+    });
+    return new Map(rows.map((r) => [r.serviceId, r._count._all]));
+  }
+
   find(id: string): Promise<ServiceRecord | null> {
     return this.prisma.service.findUnique({ where: { id }, select });
   }

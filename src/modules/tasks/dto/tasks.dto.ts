@@ -9,7 +9,7 @@ import { IsIsoDate } from "../../../common/validators/iso-date";
 const trim = ({ value }: { value: unknown }): unknown => (typeof value === "string" ? value.trim() : value);
 const toBoolean = ({ value }: { value: unknown }): unknown => (value === "true" ? true : value === "false" ? false : value);
 
-export const TASK_FILTERS = ["overdue", "today", "week", "mine"] as const;
+export const TASK_FILTERS = ["overdue", "today", "week", "upcoming", "mine"] as const;
 export type TaskFilter = (typeof TASK_FILTERS)[number];
 
 export class ListTasksQueryDto extends PaginationQueryDto {
@@ -43,10 +43,20 @@ export class ListTasksQueryDto extends PaginationQueryDto {
   @IsBoolean({ message: "done must be true or false." })
   done?: boolean;
 
-  @ApiPropertyOptional({ enum: TASK_FILTERS, description: "overdue: open and past due. today: open, due today. week: open, due in the next 7 days. mine: assigned to me." })
+  @ApiPropertyOptional({ enum: TASK_FILTERS, description: "overdue: open and past due. today: open, due today. week: open, due in the next 7 days. upcoming: open, due after today. mine: assigned to me." })
   @IsOptional()
   @IsIn(TASK_FILTERS, { message: `filter must be one of: ${TASK_FILTERS.join(", ")}.` })
   filter?: TaskFilter;
+
+  @ApiPropertyOptional({ example: "2026-11-01", description: "Due on or after this day (for a calendar month)." })
+  @IsOptional()
+  @IsIsoDate({ message: "dueFrom must be a real date as YYYY-MM-DD." })
+  dueFrom?: string;
+
+  @ApiPropertyOptional({ example: "2026-11-30", description: "Due on or before this day." })
+  @IsOptional()
+  @IsIsoDate({ message: "dueTo must be a real date as YYYY-MM-DD." })
+  dueTo?: string;
 
   @ApiPropertyOptional({ description: "Matches the title, the client's name, or a case number like PRJ-118." })
   @IsOptional()

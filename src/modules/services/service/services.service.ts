@@ -31,7 +31,9 @@ export class ServicesService {
   ) {}
 
   async list(c: ActorContext): Promise<ServiceDto[]> {
-    return this.repo.list(c.actor.role === "CLIENT");
+    if (c.actor.role === "CLIENT") return this.repo.list(true);
+    const [services, counts] = await Promise.all([this.repo.list(false), this.repo.activeCaseCounts()]);
+    return services.map((s) => ({ ...s, activeCases: counts.get(s.id) ?? 0 }));
   }
 
   async get(c: ActorContext, id: string): Promise<ServiceDto> {

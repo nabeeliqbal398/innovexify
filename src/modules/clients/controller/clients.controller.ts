@@ -5,7 +5,7 @@ import { actorContextOf } from "../../../common/interfaces/actor-context";
 import type { RequestContext } from "../../../common/interfaces/request-context";
 import { RequirePermission } from "../../../common/permissions/require-permission.decorator";
 import { ApiResponse } from "../../../common/responses/api-response";
-import { ChangeCsrDto, CreateClientDto, ListClientsQueryDto, UpdateClientProfileDto } from "../dto/clients.dto";
+import { ChangeCsrDto, CreateClientDto, ListClientsQueryDto, TimelineQueryDto, UpdateClientProfileDto } from "../dto/clients.dto";
 import { ClientsService } from "../service/clients.service";
 
 @ApiTags("clients")
@@ -26,6 +26,13 @@ export class ClientsController {
   @ApiOperation({ summary: "One client: profile, assigned CSR and case summary. A client outside your scope is a 404." })
   get(@Param("id") id: string, @Req() request: RequestContext) {
     return this.clients.get(actorContextOf(request), id);
+  }
+
+  @Get(":id/timeline")
+  @RequirePermission("viewClients")
+  @ApiOperation({ summary: "The client's relationship timeline, newest first: case stages, document history, tickets, messages and (Admin, Manager, CSR) interactions and follow-ups. A CSR never sees document notes." })
+  timeline(@Param("id") id: string, @Query() query: TimelineQueryDto, @Req() request: RequestContext) {
+    return this.clients.timeline(actorContextOf(request), id, query);
   }
 
   @Post()

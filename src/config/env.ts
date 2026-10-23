@@ -17,6 +17,8 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   THROTTLE_TTL_SECONDS: z.coerce.number().int().min(1).default(60),
   THROTTLE_LIMIT: z.coerce.number().int().min(1).default(100),
+  /** Sign-in, refresh and password routes: requests per minute per client. Keep 5 in production; browser tests raise it. */
+  AUTH_THROTTLE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(5),
   JWT_ACCESS_SECRET: z.string({ error: "JWT_ACCESS_SECRET is not set." }).min(32, "JWT_ACCESS_SECRET must be at least 32 characters. Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('hex'))\""),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
   REFRESH_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
@@ -47,6 +49,11 @@ const envSchema = z.object({
   STORAGE_DIR: z.string().trim().min(1).default("./storage"),
   /** Largest accepted upload, in megabytes (25 matches the "files over 25 MB" rule in the product). */
   MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(100).default(25),
+  /** "none" accepts every file that passes the content checks (development). "clamav" scans each file with a clamd daemon first. */
+  VIRUS_SCANNER: z.enum(["none", "clamav"]).default("none"),
+  CLAMAV_HOST: z.string().min(1).default("localhost"),
+  CLAMAV_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+  CLAMAV_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300_000).default(30_000),
   /** Messages one person may send per minute (a specific message is returned when it is exceeded). */
   MESSAGE_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(1).max(1000).default(30),
   /** Global-search requests one person may make per minute. */

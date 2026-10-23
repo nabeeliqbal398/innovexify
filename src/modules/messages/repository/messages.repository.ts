@@ -37,6 +37,8 @@ export interface ConversationRow {
 }
 
 /** All database access for messages. Aggregates (unread counts, the conversation list) are computed in SQL. */
+const STATUS_KEY: Record<string, ConversationRow["status"]> = { Active: "ACTIVE", Invited: "INVITED", Suspended: "SUSPENDED", Removed: "REMOVED" };
+
 @Injectable()
 export class MessagesRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -121,6 +123,7 @@ export class MessagesRepository {
         SELECT COUNT(*)::int AS n FROM "User" u JOIN "ClientProfile" cp ON cp."userId" = u.id
         WHERE u.role = 'CLIENT' AND u."deletedAt" IS NULL AND ${scope}`,
     ]);
-    return [rows, count[0]?.n ?? 0];
+    // Raw SQL gives the database label ("Active"); the API speaks the enum key ("ACTIVE").
+    return [rows.map((r) => ({ ...r, status: STATUS_KEY[r.status] ?? r.status })), count[0]?.n ?? 0];
   }
 }

@@ -728,6 +728,38 @@ describe("cases (e2e)", () => {
     });
   });
 
+  describe("list: csr, state, overdue, opened and client sort", () => {
+    const numbers = async (who: User, q: string): Promise<string[]> => (await as(who).get(`/api/v1/cases?${q}`)).body.data.map((c: { client: { name: string } }) => c.client.name);
+
+    it("shows each case's client CSR and filters by csr and state", async () => {
+      const res = await as(admin).get("/api/v1/cases?sort=clientName&order=asc");
+      expect(res.body.data.map((c: { client: { name: string; csr: { name: string } | null } }) => [c.client.name, c.client.csr?.name])).toEqual([
+        ["Alex Client", "Cora CSR"],
+        ["Bea Client", "Carl CSR"],
+      ]);
+      expect(await numbers(admin, `csrId=${csr2.id}`)).toEqual(["Bea Client"]);
+      expect(await numbers(admin, "state=wyoming")).toEqual(["Alex Client"]);
+      await t.prisma.clientProfile.update({ where: { userId: client2.id }, data: { csrId: null } });
+      expect(await numbers(admin, "csrId=none")).toEqual(["Bea Client"]);
+      // A filter narrows, never widens: csr1 cannot reach csr2's client by naming it.
+      expect(await numbers(csr1, `csrId=${csr2.id}`)).toEqual([]);
+    });
+
+    it("overdue means a passed target date on an unfinished case, by the server's date", async () => {
+      await t.prisma.case.update({ where: { id: case1.id }, data: { deadline: new Date("2020-01-01") } });
+      await t.prisma.case.update({ where: { id: case2.id }, data: { deadline: new Date("2020-01-01"), stage: "COMPLETED", status: "COMPLETED" } });
+      expect(await numbers(admin, "overdue=true")).toEqual(["Alex Client"]);
+      expect((await as(admin).get("/api/v1/cases?overdue=maybe")).body.errors[0].field).toBe("overdue");
+    });
+
+    it("openedFrom keeps cases opened on or after the day, and sorts by client and state", async () => {
+      await t.prisma.case.update({ where: { id: case1.id }, data: { createdAt: new Date("2020-01-01T00:00:00.000Z") } });
+      expect(await numbers(admin, "openedFrom=2021-01-01")).toEqual(["Bea Client"]);
+      expect(await numbers(admin, "sort=formationState&order=asc")).toEqual(["Bea Client", "Alex Client"]);
+      expect((await as(admin).get("/api/v1/cases?openedFrom=nope")).body.errors[0].field).toBe("openedFrom");
+    });
+  });
+
   describe("list", () => {
     beforeEach(async () => {
       await t.prisma.case.update({ where: { id: case1.id }, data: { stage: "DOCUMENTS_PENDING", status: "ACTIVE", priority: "HIGH", deadline: new Date("2026-11-10T00:00:00Z"), serviceId: "llc" } });
@@ -775,7 +807,7 @@ describe("cases (e2e)", () => {
       expect(await ids("?sort=number&order=asc")).toEqual([case1.id, case2.id]);
       const bad = await as(admin).get("/api/v1/cases?sort=ownerId");
       expect(bad.status).toBe(422);
-      expect(bad.body.errors).toEqual([{ field: "sort", message: "You can sort by number, stage, status, priority, deadline, lastActivityAt, createdAt." }]);
+      expect(bad.body.errors).toEqual([{ field: "sort", message: "You can sort by number, stage, status, priority, deadline, lastActivityAt, createdAt, clientName, formationState." }]);
     });
 
     it("sorts the newest activity first by default, and puts cases without a date last", async () => {

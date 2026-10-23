@@ -52,8 +52,7 @@ export type Permission =
   | "caseNotesCompliance"
   | "help"
   | "manageTasks"
-  | "reportAck"
-  | "resetDemo";
+  | "reportAck";
 
 const ALL_STAFF: Role[] = ["ADMIN", "MANAGER", "CSR", "COMPLIANCE"];
 
@@ -108,7 +107,6 @@ export const PERMS: Record<Permission, Role[]> = {
   help: ALL_STAFF,
   manageTasks: ["ADMIN", "MANAGER"],
   reportAck: ["COMPLIANCE"],
-  resetDemo: [...ALL_STAFF, "CLIENT"],
 };
 
 export const REASON: Record<Permission | "default", string> = {
@@ -164,7 +162,6 @@ export const REASON: Record<Permission | "default", string> = {
   help: "The staff help center is available to staff accounts.",
   manageTasks: "Only Admin and Manager can assign or edit any task.",
   reportAck: "Only Compliance acknowledges CSR reports.",
-  resetDemo: "Your role doesn't allow this action.",
   default: "Your role doesn't allow this action.",
 };
 

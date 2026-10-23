@@ -166,7 +166,7 @@ export class FilingDto {
   @ApiProperty() id!: string;
   @ApiProperty() number!: number;
   @ApiProperty({ example: "FIL-9" }) displayNumber!: string;
-  @ApiProperty() case!: { id: string; displayNumber: string; client: { id: string; name: string } };
+  @ApiProperty() case!: { id: string; displayNumber: string; client: { id: string; name: string; formationState: string } };
   @ApiProperty() type!: string;
   @ApiProperty({ enum: FilingStatus }) status!: FilingStatus;
   @ApiProperty({ nullable: true }) submittedOn!: string | null;

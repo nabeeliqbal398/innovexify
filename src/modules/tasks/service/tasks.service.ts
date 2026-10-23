@@ -85,7 +85,10 @@ export class TasksService {
     if (query.filter === "overdue") when.push({ done: false, due: { lt: today } });
     if (query.filter === "today") when.push({ done: false, due: today });
     if (query.filter === "week") when.push({ done: false, due: { gte: today, lte: addDays(today, 7) } });
+    if (query.filter === "upcoming") when.push({ done: false, due: { gt: today } });
     if (query.filter === "mine") when.push({ assigneeId: c.actor.id });
+    if (query.dueFrom && query.dueTo && query.dueFrom > query.dueTo) throw new ValidationFailedException([{ field: "dueTo", message: "dueTo can't be before dueFrom." }]);
+    if (query.dueFrom || query.dueTo) when.push({ due: { ...(query.dueFrom ? { gte: dateOnly(query.dueFrom) } : {}), ...(query.dueTo ? { lte: dateOnly(query.dueTo) } : {}) } });
 
     const where: Prisma.TaskWhereInput = {
       AND: [

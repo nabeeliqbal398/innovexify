@@ -11,6 +11,12 @@ import { DashboardService } from "../service/dashboard.service";
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
+  @Get("nav-counts")
+  @ApiOperation({ summary: "The numbers on the navigation items: the work waiting for the caller in each view (unread messages, documents to review, open tickets, ...)" })
+  navCounts(@Req() request: RequestContext) {
+    return this.dashboard.navCounts(actorContextOf(request));
+  }
+
   @Get("overview")
   @ApiOperation({ summary: "The caller's overview: numbers for their role, counted over the data they may see" })
   overview(@Req() request: RequestContext) {

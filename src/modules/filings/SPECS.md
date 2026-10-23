@@ -26,7 +26,7 @@ Base `/api/v1`.
 | DELETE | `/cases/:caseId/reminders/:id` | none | the removed reminder |
 
 Sort fields: `number` (default, newest first), `status`, `submittedOn`, `nextActionDate` (empty dates last), `type`. `search`
-matches type, reference, client name, `FIL-9` or `PRJ-118`. Each filing carries `late` (next action date passed and not approved).
+matches type, reference, client name, `FIL-9` or `PRJ-118`. Each filing's `case.client` also carries `formationState` (empty when none is chosen). Each filing carries `late` (next action date passed and not approved).
 
 ## Business rules
 - **Numbers** come from `CounterService` key `filing` inside the creating transaction (`FIL-<n>`): unique and gap-free under
@@ -62,3 +62,19 @@ parallel; completed and removed cases; a reminder on another case's id (404).
 `FILING_SUBMISSION_DATE_REQUIRED` 422, `FILING_NUMBER_REQUIRED` 422, `FILING_DATE_IN_FUTURE` 422, `FILING_REASON_REQUIRED` 422,
 `INVALID_STATE_TRANSITION` 409, `CONCURRENT_MODIFICATION` 409, `CASE_COMPLETED` 409, `CASE_DELETED` 409, `PERMISSION_DENIED` 403,
 `RESOURCE_NOT_FOUND` 404, `VALIDATION_FAILED` 422.
+
+## Compliance calendar (`GET /calendar?from=&to=`)
+`filingTracker` (Admin, Manager, Compliance) again. One call returns the dated work for the days asked for (`from` to `to`, both included, at most 400 days), read under the
+caller's scope, so the screen does not stitch five lists together or page through every case:
+
+| `kind` | What | Date |
+| --- | --- | --- |
+| `case` | an unfinished case's target date | `deadline` |
+| `filing` | an open filing's next action (`title` is the action; Approved and Rejected filings are left out) | `nextActionDate` |
+| `missing` | a document the client still owes (requested, rejected or more information needed): a "chase" entry (`title` is the document, `documentId` set) | request date + 7 days |
+| `task` | an open Compliance-type task (Compliance sees only theirs, per `taskScope`) | `due` |
+| `reminder` | an illustrative reminder | `date` |
+
+Each item has `key`, `kind`, `date`, `title`, `clientName`, `caseId`, `caseDisplay` (`PRJ-118`), `documentId` and `overdue` (before the server's today). The response also carries
+`overdueTotal` (every item of every kind dated before today, wherever it falls: the badge) and `truncated` (a kind hit the 500-item cap for that window). Reminders keep their
+"illustrative, not a legal deadline" wording on the screen. Tests: `test/calendar.e2e-spec.ts`.

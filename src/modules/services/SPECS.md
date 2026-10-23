@@ -11,7 +11,7 @@ Base `/api/v1`. Bearer token required.
 
 | Method | Route | Who | Notes |
 | --- | --- | --- | --- |
-| GET | `/services` | any signed-in | a client sees only active services |
+| GET | `/services` | any signed-in | a client sees only active services; staff also get `activeCases` (unfinished cases per service) |
 | GET | `/services/:id` | any signed-in | a switched-off service is a 404 for a client |
 | POST | `/services` | `manageServices` (Admin, Manager) | the id is made from the name (`LLC formation` is `llc-formation`) |
 | PATCH | `/services/:id` | `manageServices` | any field; an empty edit is refused |

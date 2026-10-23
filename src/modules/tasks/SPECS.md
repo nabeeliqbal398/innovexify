@@ -21,7 +21,7 @@ Base `/api/v1`. All need a bearer token.
 | POST | `/tasks/:id/reopen` | same | none | the task |
 | DELETE | `/tasks/:id` | its creator, Admin, Manager | none | the deleted task |
 
-`filter`: `overdue` (open and due before today), `today` (open, due today), `week` (open, due today to 7 days ahead), `mine`
+`dueFrom` and `dueTo` (inclusive, `dueTo` not before `dueFrom`) restrict the due date, for a calendar month. `filter`: `upcoming` (open, due after today), `overdue` (open and due before today), `today` (open, due today), `week` (open, due today to 7 days ahead), `mine`
 (assigned to me). Combines with `done`. Sort fields: `due` (default, soonest first), `priority`, `title`, `createdAt`, `done`.
 `search` matches the title, the client's name, or a number like `PRJ-118`. Each task carries `overdue`, computed on the server.
 

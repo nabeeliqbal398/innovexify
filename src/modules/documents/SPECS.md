@@ -23,6 +23,8 @@ Base `/api/v1`. All need a bearer token.
 | GET | `/documents/:id/download` | `docsAccess` (Admin, Manager, Compliance, the owning client) | none | the file's bytes |
 | DELETE | `/documents/:id` | `deleteDocument` (Admin, Manager) | none | the document (soft-deleted) |
 
+`?group=submissions|outstanding` narrows the list for the review queue and the outstanding-requests list (`submissions`: everything except still-requested and shared documents; `outstanding`: requested or sent back); it never widens a `status` filter.
+
 Sort fields: `requestedAt` (default, newest first), `name`, `status`, `type`, `submittedAt` (documents with none last).
 
 ## Status machine

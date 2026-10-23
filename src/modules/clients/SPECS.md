@@ -19,9 +19,22 @@ Base `/api/v1`. All need a bearer token.
 | PATCH | `/clients/:id/profile` | Admin, Manager: all fields. The client: own `phone, address, contactPreference, preferredName` | any of `businessName, formationState, phone, address, contactPreference, preferredName` | client detail |
 | PATCH | `/clients/:id/csr` | assign (none yet): Admin, Manager, CSR. Reassign (has one): Admin, Manager | `{ csrId, reason? }` | client detail |
 
-List: `csrId=none` finds clients without a CSR; `state` matches the formation state case-insensitively; `search` matches
+List: `filter=due|invited|waiting` are the table's quick filters (`due`: an open follow-up due today or earlier that the caller may see, so a CSR's own and none for Compliance; `invited`: invitation not accepted; `waiting`: owes a document or has a case waiting on them). `csrId=none` finds clients without a CSR; `state` matches the formation state case-insensitively; `search` matches
 name, email, business name and case ID. Sort fields: `name, email, status, caseNumber, businessName, formationState,
 joinedAt, createdAt (default, newest first)`.
+
+## Timeline
+`GET /clients/:id/timeline?relationship=true|false&limit=1..100 (default 40)` (staff; a client gets 403, a client outside the caller's scope 404) returns the client's
+newest activity, newest first, merged from: case events (`CASE`, `subKind` the stage), document history (`DOCUMENT`, `subKind` the status), tickets (`TICKET`), messages (`MESSAGE`, text cut to 90
+characters), and, only for Admin, Manager and the client's CSR (the `followups` permission) and unless `relationship=false`: interactions (`INTERACTION`, `subKind` CALL/EMAIL/...), completed
+follow-ups (`FOLLOW_UP`) and the invitation (`INVITATION`). Each entry is `{ id, kind, subKind, text, note, actor: { id, name, role } | null, at }`. A **CSR never gets a document's reasons or notes** (`note` is empty),
+and a submitted event never carries one. Each source is read with `LIMIT` (the newest `limit` of each), so the cost is bounded.
+
+## Table extras (list and detail)
+Each client in `GET /clients` and `GET /clients/:id` also carries `lastContactAt` (latest staff message, recorded interaction or completed follow-up), `nextFollowUp`
+(`{ id, due, type }`, the earliest open follow-up the caller may see: any for Admin and Manager, their own for a CSR, always null for Compliance) and `onboarding`
+(`{ done, total: 5 }`: accepted the invitation, gave a phone or address, has a case, case at Documents Under Review or later, owes no documents). They are computed in SQL for
+the clients on the page only. They are absent from the response to a create or an edit.
 
 ## Scope (who sees which client)
 Admin, Manager, Compliance: every client. CSR: only clients assigned to them. Client: only themselves. A client outside the

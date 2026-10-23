@@ -18,7 +18,7 @@ export const filingSelect = {
       number: true,
       stage: true,
       deletedAt: true,
-      client: { select: { id: true, name: true, clientProfile: { select: { caseNumber: true } } } },
+      client: { select: { id: true, name: true, clientProfile: { select: { caseNumber: true, formationState: true } } } },
     },
   },
 } satisfies Prisma.FilingSelect;

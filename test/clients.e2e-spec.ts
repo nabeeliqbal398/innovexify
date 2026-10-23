@@ -374,6 +374,122 @@ describe("clients (e2e)", () => {
     });
   });
 
+  describe("table extras and quick filters", () => {
+    const yesterday = new Date(Date.now() - 86_400_000);
+    const nextWeek = new Date(Date.now() + 7 * 86_400_000);
+
+    it("returns last contact, next follow-up and onboarding progress, counted by hand", async () => {
+      // Client 1: a staff message (older), an interaction (newer) and a completed follow-up (newest) -> the newest is the last contact.
+      await t.prisma.message.create({ data: { clientId: client1.id, senderId: csr1.id, text: "hi", createdAt: new Date("2026-05-01T10:00:00.000Z") } });
+      await t.prisma.message.create({ data: { clientId: client1.id, senderId: client1.id, text: "client reply is not contact", createdAt: new Date("2026-09-01T10:00:00.000Z") } });
+      await t.prisma.interaction.create({ data: { clientId: client1.id, byId: csr1.id, kind: "CALL", text: "called", at: new Date("2026-06-01T10:00:00.000Z") } });
+      await t.prisma.followUp.create({ data: { clientId: client1.id, csrId: csr1.id, type: "EMAIL", due: new Date("2026-06-15"), note: "n", status: "DONE", doneAt: new Date("2026-06-20T10:00:00.000Z") } });
+      await t.prisma.followUp.create({ data: { clientId: client1.id, csrId: csr1.id, type: "CALL", due: nextWeek, note: "later" } });
+      await t.prisma.followUp.create({ data: { clientId: client1.id, csrId: csr1.id, type: "PORTAL_MESSAGE", due: yesterday, note: "sooner" } });
+      // Onboarding for client 1: active (1) + no phone/address (0) + has a case (1) + case at Invitation Sent (0) + no owed documents (1) = 3 of 5.
+      const res = await as(admin).get(`/api/v1/clients?search=Alex`);
+      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data[0]).toMatchObject({
+        lastContactAt: "2026-06-20T10:00:00.000Z",
+        nextFollowUp: { type: "PORTAL_MESSAGE", due: yesterday.toISOString().slice(0, 10) },
+        onboarding: { done: 3, total: 5 },
+      });
+      // Giving a phone, and a stage at review, adds two more; an owed document takes one away.
+      await t.prisma.clientProfile.update({ where: { userId: client1.id }, data: { phone: "+1 555 0100" } });
+      await t.prisma.case.updateMany({ where: { clientId: client1.id }, data: { stage: "DOCUMENTS_UNDER_REVIEW" } });
+      const better = await as(admin).get(`/api/v1/clients/${client1.id}`);
+      expect(better.body.data.onboarding).toEqual({ done: 5, total: 5 });
+      await t.prisma.document.create({ data: { clientId: client1.id, name: "Passport", status: "REQUESTED" } });
+      expect((await as(admin).get(`/api/v1/clients/${client1.id}`)).body.data.onboarding).toEqual({ done: 4, total: 5 });
+    });
+
+    it("gives clients with nothing recorded null contact and follow-up", async () => {
+      const res = await as(admin).get(`/api/v1/clients?search=Bea`);
+      expect(res.body.data[0]).toMatchObject({ lastContactAt: null, nextFollowUp: null });
+    });
+
+    it("shows a CSR only their own follow-ups, and Compliance none", async () => {
+      await t.prisma.followUp.create({ data: { clientId: client1.id, csrId: csr1.id, type: "CALL", due: nextWeek, note: "n" } });
+      expect((await as(csr1).get("/api/v1/clients")).body.data[0].nextFollowUp).toMatchObject({ type: "CALL" });
+      expect((await as(compliance).get("/api/v1/clients?search=Alex")).body.data[0].nextFollowUp).toBeNull();
+      // Another CSR's follow-up on a client that CSR can see is not shown: csr2 cannot see client 1 at all.
+      expect((await as(csr2).get(`/api/v1/clients/${client1.id}`)).status).toBe(404);
+    });
+
+    it("filters: due, invited, waiting", async () => {
+      await t.prisma.followUp.create({ data: { clientId: client1.id, csrId: csr1.id, type: "CALL", due: yesterday, note: "overdue" } });
+      await t.prisma.followUp.create({ data: { clientId: client2.id, csrId: csr2.id, type: "CALL", due: nextWeek, note: "not yet" } });
+      const names = async (user: Parameters<typeof as>[0], query: string): Promise<string[]> => (await as(user).get(`/api/v1/clients?${query}`)).body.data.map((c: { name: string }) => c.name);
+      expect(await names(admin, "filter=due")).toEqual(["Alex Client"]);
+      // Compliance has no follow-ups to see, so "due" finds nothing for them; a CSR's filter only counts their own.
+      expect(await names(compliance, "filter=due")).toEqual([]);
+      expect(await names(csr2, "filter=due")).toEqual([]);
+
+      const invited = await makeUser(t.prisma, { email: "pending@test.dev", name: "Pat Pending", role: "CLIENT", status: "INVITED", password: false, csrId: csr1.id });
+      expect(await names(admin, "filter=invited")).toEqual(["Pat Pending"]);
+      expect(await names(csr2, "filter=invited")).toEqual([]);
+
+      await t.prisma.document.create({ data: { clientId: client2.id, name: "Lease", status: "REJECTED" } });
+      await t.prisma.case.updateMany({ where: { clientId: client1.id }, data: { status: "AWAITING_CLIENT" } });
+      expect((await names(admin, "filter=waiting")).sort()).toEqual(["Alex Client", "Bea Client"]);
+      await t.prisma.case.updateMany({ where: { clientId: client1.id }, data: { status: "ACTIVE" } });
+      expect(await names(admin, "filter=waiting")).toEqual(["Bea Client"]);
+      expect(invited.id).toBeTruthy();
+      const bad = await as(admin).get("/api/v1/clients?filter=nonsense");
+      expect(bad.status).toBe(422);
+      expect(bad.body.errors[0].field).toBe("filter");
+    });
+  });
+
+  describe("timeline", () => {
+    beforeEach(async () => {
+      const kase = await t.prisma.case.findFirstOrThrow({ where: { clientId: client1.id } });
+      await t.prisma.caseEvent.create({ data: { caseId: kase.id, toStage: "CLIENT_ONBOARDING", byId: admin.id, note: "Moved on", at: new Date("2026-06-01T10:00:00.000Z") } });
+      const doc = await t.prisma.document.create({ data: { clientId: client1.id, name: "Passport", status: "REJECTED" } });
+      await t.prisma.documentEvent.create({ data: { documentId: doc.id, status: "SUBMITTED", byId: client1.id, note: "uploaded", at: new Date("2026-06-02T10:00:00.000Z") } });
+      await t.prisma.documentEvent.create({ data: { documentId: doc.id, status: "REJECTED", byId: compliance.id, note: "Photo is blurry", at: new Date("2026-06-03T10:00:00.000Z") } });
+      await t.prisma.ticket.create({ data: { number: 7001, clientId: client1.id, title: "Help me", category: "GENERAL_REQUEST", description: "d", createdAt: new Date("2026-06-04T10:00:00.000Z") } });
+      await t.prisma.message.create({ data: { clientId: client1.id, senderId: client1.id, text: "x".repeat(120), createdAt: new Date("2026-06-05T10:00:00.000Z") } });
+      await t.prisma.interaction.create({ data: { clientId: client1.id, byId: csr1.id, kind: "CALL", text: "Called", at: new Date("2026-06-06T10:00:00.000Z") } });
+      await t.prisma.followUp.create({ data: { clientId: client1.id, csrId: csr1.id, type: "EMAIL", due: new Date("2026-06-01"), note: "n", outcome: "Sent it", status: "DONE", doneAt: new Date("2026-06-07T10:00:00.000Z") } });
+    });
+
+    it("merges every source newest first, with the relationship entries for Admin, Manager and the client's CSR", async () => {
+      for (const who of [admin, manager, csr1]) {
+        const res = await as(who).get(`/api/v1/clients/${client1.id}/timeline`);
+        expect(res.status).toBe(200);
+        // The invitation entry is dated when the account was made (now), so it is checked separately from the order of the rest.
+        const kinds = res.body.data.map((e: { kind: string }) => e.kind).filter((k: string) => k !== "INVITATION");
+        expect(kinds.slice(0, 7)).toEqual(["FOLLOW_UP", "INTERACTION", "MESSAGE", "TICKET", "DOCUMENT", "DOCUMENT", "CASE"]);
+        expect(res.body.data.map((e: { kind: string }) => e.kind)).toContain("INVITATION");
+        const rest = res.body.data.filter((e: { kind: string }) => e.kind !== "INVITATION");
+        expect(rest[0]).toMatchObject({ text: "Sent it", actor: { id: csr1.id } });
+        expect(rest[2].text).toHaveLength(93); // 90 characters and an ellipsis
+      }
+    });
+
+    it("hides document notes from a CSR but shows them to Admin and Compliance", async () => {
+      const note = async (who: Parameters<typeof as>[0]) => (await as(who).get(`/api/v1/clients/${client1.id}/timeline?relationship=false`)).body.data.find((e: { subKind: string }) => e.subKind === "REJECTED").note;
+      expect(await note(csr1)).toBe("");
+      expect(await note(admin)).toBe("Photo is blurry");
+      expect(await note(compliance)).toBe("Photo is blurry");
+    });
+
+    it("leaves out the relationship entries for Compliance and when asked", async () => {
+      const kinds = async (who: Parameters<typeof as>[0], q = "") => (await as(who).get(`/api/v1/clients/${client1.id}/timeline${q}`)).body.data.map((e: { kind: string }) => e.kind);
+      expect(await kinds(compliance)).not.toEqual(expect.arrayContaining(["INTERACTION"]));
+      expect(await kinds(compliance)).not.toContain("INVITATION");
+      expect(await kinds(admin, "?relationship=false")).not.toContain("FOLLOW_UP");
+    });
+
+    it("limits the entries, validates, and is scoped: another CSR gets 404, a client 403", async () => {
+      expect((await as(admin).get(`/api/v1/clients/${client1.id}/timeline?limit=3`)).body.data).toHaveLength(3);
+      expect((await as(admin).get(`/api/v1/clients/${client1.id}/timeline?limit=101`)).body.errors[0].field).toBe("limit");
+      expect((await as(csr2).get(`/api/v1/clients/${client1.id}/timeline`)).status).toBe(404);
+      expect((await as(client1).get(`/api/v1/clients/${client1.id}/timeline`)).status).toBe(403);
+    });
+  });
+
   describe("profile", () => {
     it("lets Admin and Manager change every field, and audits it", async () => {
       const res = await as(manager).patch(`/api/v1/clients/${client1.id}/profile`).send({

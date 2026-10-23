@@ -18,7 +18,8 @@ Base `/api/v1`. All need a bearer token. Standard envelope; lists return `data` 
 
 | Method | Route | Who | Request | Response `data` |
 | --- | --- | --- | --- | --- |
-| GET | `/users` | Admin, Manager | `?search&role&status&sort&order&page&limit` | page of users |
+| GET | `/users` | Admin, Manager | `?search&role&staff&status&sort&order&page&limit` | page of users |
+| GET | `/users/directory` | any staff (not clients) | `?role=ADMIN\|MANAGER\|CSR\|COMPLIANCE` | active staff `[{ id, name, role }]` by name, at most 500, no emails |
 | GET | `/users/:id` | Admin, Manager | none | user (removed accounts included, read-only) |
 | POST | `/users` | Admin, Manager, then `invite<ROLE>` | `{ email, role, name?, note? }` | the invited user (`INVITED`) |
 | POST | `/users/:id/resend-invitation` | Admin, Manager; CSR for their own clients | none | the user |
@@ -31,6 +32,11 @@ Base `/api/v1`. All need a bearer token. Standard envelope; lists return `data` 
 
 Sort fields for the list: `name, email, role, status, createdAt (default, newest first), lastLoginAt`. Naming a `sort`
 without `order` means ascending. Removed accounts only appear with `status=REMOVED`.
+
+## Staff extras (list and detail)
+Every staff row (not clients) in `GET /users` and `GET /users/:id` carries `lastActivityAt` (the latest allowed audit entry by that person, null if none) and `workload`:
+`clients` (assigned), `cases` (unfinished cases of those clients plus ones they own), `openTasks`, `overdueTasks` (due before the server's date), `openFollowUps`,
+`openTickets` (handled) and `reviewsLast30Days`. They are computed in SQL for the people on the page only. Every row also has `invitedByName`.
 
 ## Business rules
 - **Who may invite which role** comes from `can()`: `inviteMANAGER` Admin; `inviteCSR` and `inviteCOMPLIANCE` Admin and

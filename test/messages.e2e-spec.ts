@@ -423,9 +423,10 @@ describe("messages (e2e)", () => {
       await t.prisma.user.update({ where: { id: client2.id }, data: { status: "SUSPENDED" } });
       const rows = await conv(admin);
       expect(rows.map((x) => x.client.id)).toContain(quiet.id);
-      expect(rows.find((x) => x.client.id === quiet.id)).toMatchObject({ lastMessage: null, unread: 0 });
+      // An active client's thread can be written to, and the status is the enum key (not the database label).
+      expect(rows.find((x) => x.client.id === quiet.id)).toMatchObject({ lastMessage: null, unread: 0, writable: true, client: { status: "ACTIVE" } });
       const suspended = (await as(admin).get("/api/v1/conversations")).body.data.find((x: { client: { id: string } }) => x.client.id === client2.id);
-      expect(suspended.writable).toBe(false);
+      expect(suspended).toMatchObject({ writable: false, client: { status: "SUSPENDED" } });
       const page = await as(admin).get("/api/v1/conversations?limit=2&page=2");
       expect(page.body.meta).toEqual({ page: 2, limit: 2, total: 3, totalPages: 2 });
       expect((await as(admin).get("/api/v1/conversations?page=0&limit=101")).body.errors.map((e: { field: string }) => e.field).sort()).toEqual(["limit", "page"]);

@@ -153,6 +153,23 @@ describe("dashboard overview (e2e)", () => {
     expect(text).not.toContain("Cal Client");
   });
 
+  it("counts the work waiting in each navigation item, per role", async () => {
+    const counts = async (who: User) => (await as(who).get("/api/v1/dashboard/nav-counts")).body.data;
+    expect(await counts(ada)).toEqual({ messages: 0, cmsgs: 0, documents: 2, tickets: 2, reports: 0, followups: 1, tasks: 1 });
+    expect(await counts(max)).toEqual(await counts(ada));
+    expect(await counts(sam)).toEqual({ messages: 0, cmsgs: 0, documents: 1, tickets: 2, reports: 0, followups: 1, tasks: 0 });
+    expect(await counts(carl)).toEqual({ messages: 0, cmsgs: 0, documents: 1, tickets: 0, reports: 0, followups: 0, tasks: 0 });
+    expect(await counts(cleo)).toEqual({ messages: 0, cmsgs: 0, documents: 2, tickets: 2, reports: 0, followups: 0, tasks: 0 });
+    // A message from the CSR is unread for the client, and the client's reply for the CSR.
+    await t.prisma.message.create({ data: { clientId: alex.id, senderId: sam.id, text: "Hello Alex" } });
+    expect((await counts(alex)).cmsgs).toBe(1);
+    expect((await counts(alex)).messages).toBe(0);
+    expect(await counts(alex)).toMatchObject({ documents: 0, tickets: 0, followups: 0, tasks: 0 });
+    await t.prisma.message.create({ data: { clientId: alex.id, senderId: alex.id, text: "Hi John" } });
+    expect((await counts(sam)).messages).toBe(1);
+    expect((await api(t).get("/api/v1/dashboard/nav-counts")).status).toBe(401);
+  });
+
   it("handles an empty database with zeros and empty lists", async () => {
     await resetDatabase(t.prisma);
     const admin = await makeUser(t.prisma, { email: "a2@test.dev", name: "A2", role: "ADMIN" });

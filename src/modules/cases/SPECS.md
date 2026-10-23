@@ -22,9 +22,9 @@ Base `/api/v1`. All need a bearer token. `:id` is the case's id (not the `PRJ-` 
 | POST | `/cases/:id/stage` | `complianceMilestones` (Admin, Manager, Compliance) | `{ targetStage, version, filingConfirmation?, note? }` | the case |
 | POST | `/cases/:id/notes` | `caseNotes` (staff) | `{ text, visibility?: "STAFF" \| "COMPLIANCE" }` | the note |
 
-List filters: `ownerId=none` finds cases without an owner; the deadline range is inclusive; `search` matches client name,
+List filters: `csrId` (the client's CSR, or `none`), `state` (the client's formation state, case-insensitive), `overdue=true` (unfinished with a passed target date, by the server's date) and `openedFrom` (opened on or after a day) narrow the list like the rest; every case's `client` also carries its `csr`. `ownerId=none` finds cases without an owner; the deadline range is inclusive; `search` matches client name,
 email, business name, case ID, service name, or a number such as `PRJ-118` / `118`. Sort fields: `number, stage, status,
-priority, deadline (cases without a date always last), lastActivityAt (default, newest first), createdAt`.
+priority, deadline (cases without a date always last), lastActivityAt (default, newest first), createdAt, clientName, formationState`.
 
 ## Scope
 Admin, Manager, Compliance: every case. CSR: cases of their assigned clients. Client: their own. Outside scope -> **404**

@@ -46,7 +46,14 @@ type Db = Prisma.TransactionClient;
 const SORT_FIELDS = ["number", "createdAt", "updatedAt", "priority", "status"] as const;
 const displayTicket = (number: number): string => `TKT-${number}`;
 
-export function toTicketDto(t: TicketRecord, forClient: boolean): TicketDto {
+/** The statuses this person may move the ticket to right now (what the screen offers as buttons). */
+export function allowedStatuses(t: Pick<TicketRecord, "status" | "resolvedAt">, forClient: boolean, reopenDays: number, now: Date = new Date()): TicketStatus[] {
+  if (!forClient) return [...NEXT_STATUS[t.status]];
+  if (t.status !== "RESOLVED") return [];
+  return withinReopenWindow(t.resolvedAt, now, reopenDays) ? ["OPEN", "CLOSED"] : ["CLOSED"];
+}
+
+export function toTicketDto(t: TicketRecord, forClient: boolean, reopenDays = 0): TicketDto {
   return {
     id: t.id,
     number: t.number,
@@ -58,6 +65,7 @@ export function toTicketDto(t: TicketRecord, forClient: boolean): TicketDto {
     status: t.status,
     statusLabel: TICKET_LABEL[t.status],
     version: t.version,
+    allowedStatuses: allowedStatuses(t, forClient, reopenDays),
     client: { id: t.client.id, name: t.client.name, caseNumber: t.client.clientProfile?.caseNumber ?? "" },
     handler: t.handler,
     case: t.case ? { id: t.case.id, displayNumber: formatCaseDisplay(t.case.number) } : null,
@@ -97,6 +105,7 @@ export class TicketsService {
       AND: [
         ticketScope(c.actor),
         ...(query.status ? [{ status: query.status }] : []),
+        ...(query.group ? [{ status: query.group === "active" ? { notIn: ["RESOLVED", "CLOSED"] as TicketStatus[] } : { in: ["RESOLVED", "CLOSED"] as TicketStatus[] } }] : []),
         ...(query.priority ? [{ priority: query.priority }] : []),
         ...(query.category ? [{ category: query.category }] : []),
         ...(query.clientId ? [{ clientId: query.clientId }] : []),
@@ -119,7 +128,7 @@ export class TicketsService {
     const orderBy: Prisma.TicketOrderByWithRelationInput[] = [{ [sort.field]: sort.order }, { id: "asc" }];
     const { skip, take } = windowOf(query);
     const [rows, total] = await this.repo.page(where, orderBy, skip, take);
-    return new PaginatedResponse(rows.map((t) => toTicketDto(t, forClient)), total, query.page, query.limit);
+    return new PaginatedResponse(rows.map((t) => toTicketDto(t, forClient, this.config.env.TICKET_REOPEN_DAYS)), total, query.page, query.limit);
   }
 
   async get(c: ActorContext, id: string): Promise<TicketDetailDto> {
@@ -335,7 +344,7 @@ export class TicketsService {
     const forClient = c.actor.role === "CLIENT";
     const [messages, events] = await Promise.all([this.repo.messages(ticket.id, !forClient), this.repo.events(ticket.id, forClient)]);
     return {
-      ...toTicketDto(ticket, forClient),
+      ...toTicketDto(ticket, forClient, this.config.env.TICKET_REOPEN_DAYS),
       messages: messages.map(toMessageDto),
       events: events.map((e) => ({ id: e.id, from: e.fromStatus, to: e.toStatus, note: e.note, by: e.by, at: e.at })),
     };
@@ -343,7 +352,9 @@ export class TicketsService {
 
   /** A ticket the caller may see. Anything else is a 404, the same as one that doesn't exist. */
   private async require(c: ActorContext, id: string): Promise<TicketRecord> {
-    const ticket = await this.repo.findOne({ AND: [{ id }, ticketScope(c.actor)] });
+    // The id in the URL may also be the number people read (TKT-1004), which is what links and search results carry.
+    const byNumber = /^tkt-(\d{1,9})$/i.exec(id);
+    const ticket = await this.repo.findOne({ AND: [byNumber ? { number: Number(byNumber[1]) } : { id }, ticketScope(c.actor)] });
     if (!ticket) throw new ResourceNotFoundException("ticket", id);
     return ticket;
   }

@@ -33,6 +33,14 @@ When the database is down it returns **503** with a clear message.
 
 pgAdmin is optional: `docker compose --profile tools up -d pgadmin` (http://127.0.0.1:5050).
 
+### Other scripts
+
+| Script | What it does |
+| --- | --- |
+| `npm run admin:create` | Creates the first Admin of a new installation from `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` (refuses when an Admin exists). Use it in production, where there is no seed data. Runs from the build: `node dist/cli/create-admin.js` |
+| `bash scripts/with-test-lock.sh <command>` | Runs a command while holding a lock on the shared test database, so two people never run e2e tests at once |
+| `bash scripts/restart-api.sh` | Rebuilds and restarts the development API (used before `npm run api:types` in the frontend) |
+
 ### Production-style run
 
 ```powershell
@@ -57,6 +65,7 @@ and the database port is not published.
   `ANALYTICS_CACHE_SECONDS`) and global search (`GET /search?q=`). Conversations and notifications page by cursor (`before`, `since`);
   sending messages and searching are rate-limited per person (`MESSAGE_RATE_LIMIT_PER_MIN`, `SEARCH_RATE_LIMIT_PER_MIN`). A reopened ticket window
   is `TICKET_REOPEN_DAYS`. In-memory caches and limits are per instance; see `src/common/SPECS.md` for the Redis swap.
+- Also for the web app: `GET /users/directory` (staff pickers), `GET /dashboard/nav-counts`, client-list extras (`lastContactAt`, `nextFollowUp`, `onboarding`, `?filter=`), staff `workload`, and `GET /services` with `activeCases`. `MAIL_OUTBOX_FILE` (development only) appends every email to a file, and `AUTH_THROTTLE_LIMIT` raises the sign-in limit for browser tests. `VIRUS_SCANNER=clamav` scans uploads with ClamAV (`GO-LIVE.md`).
 - Uploaded documents are stored by `StorageService` (local disk in `STORAGE_DIR`). See "File storage" below.
 - Invitation emails go through `MailService`. In development `LogMailService` writes the email, including the invitation
   link, to the API log instead of sending it; replace it in `MailModule` to use SMTP.

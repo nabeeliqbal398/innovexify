@@ -23,7 +23,7 @@ export const caseSelect = {
       name: true,
       email: true,
       status: true,
-      clientProfile: { select: { caseNumber: true, businessName: true, formationState: true, csrId: true } },
+      clientProfile: { select: { caseNumber: true, businessName: true, formationState: true, csrId: true, csr: { select: { id: true, name: true } } } },
     },
   },
   service: { select: { id: true, name: true } },
@@ -63,5 +63,5 @@ export const filingSelect = {
 } satisfies Prisma.FilingSelect;
 export type FilingRecord = Prisma.FilingGetPayload<{ select: typeof filingSelect }>;
 
-export type CaseSortField = "number" | "stage" | "status" | "priority" | "deadline" | "lastActivityAt" | "createdAt";
-export const CASE_SORT_FIELDS: readonly CaseSortField[] = ["number", "stage", "status", "priority", "deadline", "lastActivityAt", "createdAt"];
+export type CaseSortField = "number" | "stage" | "status" | "priority" | "deadline" | "lastActivityAt" | "createdAt" | "clientName" | "formationState";
+export const CASE_SORT_FIELDS: readonly CaseSortField[] = ["number", "stage", "status", "priority", "deadline", "lastActivityAt", "createdAt", "clientName", "formationState"];

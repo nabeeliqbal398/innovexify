@@ -10,15 +10,15 @@ export class UpdateCompanyDto {
   @IsOptional()
   @Transform(trim)
   @IsString({ message: "name must be text." })
-  @MinLength(1, { message: "The company name can't be empty." })
+  @MinLength(2, { message: "The company name must be at least 2 characters." })
   @MaxLength(60, { message: "The company name can't be longer than 60 characters." })
   name?: string;
 
-  @ApiPropertyOptional({ example: "CASE", description: "1 to 8 letters; used for case IDs created from now on. Admin and Manager." })
+  @ApiPropertyOptional({ example: "CASE", description: "2 to 8 letters; used for case IDs created from now on. Admin and Manager." })
   @IsOptional()
   @Transform(upper)
   @IsString({ message: "casePrefix must be text." })
-  @Matches(/^[A-Z]{1,8}$/, { message: "The case prefix must be 1 to 8 letters (A to Z), with no spaces, digits or symbols." })
+  @Matches(/^[A-Z]{2,8}$/, { message: "The case prefix must be 2 to 8 letters (A to Z), with no spaces, digits or symbols." })
   casePrefix?: string;
 
   @ApiPropertyOptional({ description: "A PNG or JPEG as a data URL, under 200 KB. Send an empty string to remove the logo. Admin only." })

@@ -260,6 +260,32 @@ describe("follow-ups and interactions (e2e)", () => {
     });
   });
 
+  describe("recent interactions across clients, and sorting by completion time", () => {
+    const interaction = (client: User, by: User, text: string, at: string) =>
+      t.prisma.interaction.create({ data: { clientId: client.id, byId: by.id, kind: "CALL", text, at: new Date(at) } });
+
+    it("lists the newest first with each client; a CSR gets only their own clients, Compliance and clients are refused", async () => {
+      await interaction(client1, csr1, "first", "2026-06-01T10:00:00.000Z");
+      await interaction(client2, csr2, "second", "2026-06-02T10:00:00.000Z");
+      await interaction(client1, csr1, "third", "2026-06-03T10:00:00.000Z");
+      const all = await as(admin).get("/api/v1/followups/interactions");
+      expect(all.body.data.map((i: { text: string }) => i.text)).toEqual(["third", "second", "first"]);
+      expect(all.body.data[1].client).toMatchObject({ id: client2.id, name: "Bea Client" });
+      expect((await as(csr1).get("/api/v1/followups/interactions")).body.data.map((i: { text: string }) => i.text)).toEqual(["third", "first"]);
+      expect((await as(csr1).get(`/api/v1/followups/interactions?clientId=${client2.id}`)).body.data).toEqual([]);
+      expect((await as(admin).get(`/api/v1/followups/interactions?clientId=${client2.id}`)).body.data).toHaveLength(1);
+      expect((await as(compliance).get("/api/v1/followups/interactions")).status).toBe(403);
+      expect((await as(client1).get("/api/v1/followups/interactions")).status).toBe(403);
+      expect((await as(admin).get("/api/v1/followups/interactions?limit=101")).body.errors[0].field).toBe("limit");
+    });
+
+    it("sorts follow-ups by doneAt", async () => {
+      const a = await seed(csr1, client1, dayOffset(1), { status: "DONE", doneAt: new Date("2026-06-01T10:00:00.000Z") });
+      const b = await seed(csr1, client1, dayOffset(1), { status: "DONE", doneAt: new Date("2026-06-05T10:00:00.000Z") });
+      expect(await ids(admin, "?status=DONE&sort=doneAt&order=desc")).toEqual([b.id, a.id]);
+    });
+  });
+
   describe("interactions", () => {
     it("records who and when, newest first", async () => {
       const first = await as(csr1).post(`/api/v1/clients/${client1.id}/interactions`).send({ kind: "CALL", text: "  Left a voicemail  " });
