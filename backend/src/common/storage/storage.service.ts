@@ -33,6 +33,8 @@ export abstract class StorageService {
   abstract open(key: string): Promise<StoredObject>;
   /** Deleting a missing key is not an error. */
   abstract remove(key: string): Promise<void>;
+  /** Proves objects can be stored right now (for monitoring). Rejects when they cannot. */
+  abstract checkWritable(): Promise<void>;
 }
 
 export const newStorageKey = (): string => randomUUID();
@@ -96,5 +98,14 @@ export class LocalDiskStorage extends StorageService implements OnModuleInit {
 
   async remove(key: string): Promise<void> {
     await fs.rm(this.pathOf(key), { force: true });
+  }
+
+  async checkWritable(): Promise<void> {
+    const probe = path.join(this.root, `.health-${randomUUID()}.part`);
+    try {
+      await fs.writeFile(probe, "ok", { flag: "wx", mode: 0o600 });
+    } finally {
+      await fs.rm(probe, { force: true }).catch(() => undefined);
+    }
   }
 }

@@ -59,6 +59,28 @@ export class AcceptInvitationDto {
   password!: string;
 }
 
+export class ForgotPasswordDto {
+  @ApiProperty({ example: "sarah.bennett@example.com" })
+  @Transform(lower)
+  @IsEmail({}, { message: "Enter a valid email address." })
+  @MaxLength(254, { message: "That email address is too long." })
+  email!: string;
+}
+
+export class ResetPasswordDto {
+  @ApiProperty({ description: "The token from the password reset link." })
+  @Transform(trim)
+  @IsString({ message: "The reset token is required." })
+  @MinLength(32, { message: "This password reset link isn't valid." })
+  @MaxLength(256, { message: "This password reset link isn't valid." })
+  token!: string;
+
+  @ApiProperty({ example: "Correct-Horse-9Battery" })
+  @IsString({ message: "Choose a new password." })
+  @Matches(PASSWORD_PATTERN, { message: PASSWORD_MESSAGE })
+  password!: string;
+}
+
 export class InvitationLookupDto {
   @ApiProperty() email!: string;
   @ApiProperty() name!: string;

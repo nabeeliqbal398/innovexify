@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { z } from "@/lib/z";
 
 import { MessageBubble } from "@/components/common/message-bubble";
 import { Pager } from "@/components/common/pager";

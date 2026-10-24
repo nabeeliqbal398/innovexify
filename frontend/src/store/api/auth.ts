@@ -52,6 +52,19 @@ export const authApi = baseApi.injectEndpoints({
       query: (body) => ({ url: "/auth/accept-invitation", method: "POST", body }),
       transformResponse: (env: Env<ApiSession>) => unwrap(env),
     }),
+    /** Always answers with the same message, whether or not the account exists. */
+    forgotPassword: build.mutation<{ message: string }, { email: string }>({
+      query: (body) => ({ url: "/auth/forgot-password", method: "POST", body }),
+      transformResponse: (env: Env<null>) => ({ message: env.message ?? "If an account exists for that email, we have sent a link to reset the password." }),
+    }),
+    passwordResetLink: build.query<{ expiresAt: string }, string>({
+      query: (token) => `/auth/reset-password/${encodeURIComponent(token)}`,
+      transformResponse: (env: Env<{ expiresAt: string }>) => unwrap(env),
+    }),
+    resetPassword: build.mutation<{ sessionsEnded: number }, { token: string; password: string }>({
+      query: (body) => ({ url: "/auth/reset-password", method: "POST", body }),
+      transformResponse: (env: Env<{ sessionsEnded: number }>) => unwrap(env),
+    }),
     preferences: build.query<NotificationPrefs, void>({
       query: () => "/users/me/notification-preferences",
       transformResponse: (env: Env<ApiPreference[]>) => mapPrefs(unwrap(env)),
@@ -74,6 +87,9 @@ export const {
   useChangePasswordMutation,
   useInvitationQuery,
   useAcceptInvitationMutation,
+  useForgotPasswordMutation,
+  usePasswordResetLinkQuery,
+  useResetPasswordMutation,
   usePreferencesQuery,
   useUpdatePreferenceMutation,
 } = authApi;

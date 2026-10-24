@@ -65,6 +65,9 @@ test.describe("people and documents", () => {
   test("the client's upload is refused when the file is not a real document", async ({ browser }) => {
     const client = await openAs(browser, "client");
     await client.page.getByRole("button", { name: /Documents/ }).first().click();
+    // Wait for the Documents screen itself: the Home page shows this document's name too (twice), so asserting on the name alone matched Home
+    // for the moment the navigation takes, and Playwright's strict matching failed on the two matches.
+    await expect(client.page.getByRole("heading", { name: "Documents" })).toBeVisible();
     await expect(client.page.getByText("Proof of address (updated)")).toBeVisible();
     await client.page.getByLabel("Upload Proof of address (updated)").setInputFiles({ name: "program.exe", mimeType: "application/octet-stream", buffer: Buffer.from("MZ not a document") });
     await expect(client.page.getByRole("alert").first()).toContainText(/PDF|PNG|JPG|DOCX|type/i);

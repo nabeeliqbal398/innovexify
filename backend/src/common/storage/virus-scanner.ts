@@ -15,6 +15,8 @@ export type ScanResult = { clean: true } | { clean: false; reason?: string };
  */
 export abstract class VirusScanner {
   abstract scan(request: ScanRequest): Promise<ScanResult>;
+  /** Is the scanner there to answer right now (for monitoring)? Rejects when not. Not defined for a scanner that does nothing. */
+  ping?(): Promise<void>;
 }
 
 /** Placeholder: accepts everything. NOT a security control; it only marks where the real scan goes. */

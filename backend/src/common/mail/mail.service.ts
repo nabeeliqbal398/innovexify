@@ -1,6 +1,6 @@
 import { appendFile } from "node:fs/promises";
 
-import { Global, Injectable, Logger, Module } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 
 export interface MailMessage {
   to: string;
@@ -8,7 +8,7 @@ export interface MailMessage {
   /** Plain-text body. */
   text: string;
   /** What kind of email this is, for logs and later for per-template switches. */
-  kind: "invitation" | "email-change" | "notification";
+  kind: "invitation" | "email-change" | "notification" | "password-reset" | "password-changed";
   /** The email template chosen for this kind of message in Notifications & automation, when one applies. */
   template?: string;
 }
@@ -36,7 +36,3 @@ export class LogMailService extends MailService {
     if (outbox && process.env.NODE_ENV !== "production") await appendFile(outbox, `${JSON.stringify({ at: new Date().toISOString(), ...message })}\n`);
   }
 }
-
-@Global()
-@Module({ providers: [{ provide: MailService, useClass: LogMailService }], exports: [MailService] })
-export class MailModule {}

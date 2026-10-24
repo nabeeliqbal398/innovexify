@@ -55,3 +55,36 @@ export function notificationMail(input: { to: string; name: string; text: string
     text: `Hi ${input.name},\n\n${input.text}\n\nSign in to ${input.companyName} for details.`,
   };
 }
+
+export function passwordResetMail(input: { to: string; name: string; companyName: string; url: string; expiresInMinutes: number }): MailMessage {
+  return {
+    to: input.to,
+    kind: "password-reset",
+    subject: `Reset your ${input.companyName} password`,
+    text: [
+      `Hi ${input.name},`,
+      "",
+      `We received a request to reset the password on your ${input.companyName} account.`,
+      `Choose a new password: ${input.url}`,
+      `This link works once and expires in ${input.expiresInMinutes} minutes.`,
+      "",
+      "If you did not ask for this, ignore this email: your password has not changed.",
+    ].join("\n"),
+  };
+}
+
+/** Always sent after a reset (a security notice, not a notification a person can switch off). */
+export function passwordChangedMail(input: { to: string; name: string; companyName: string; at: Date }): MailMessage {
+  return {
+    to: input.to,
+    kind: "password-changed",
+    subject: `Your ${input.companyName} password was changed`,
+    text: [
+      `Hi ${input.name},`,
+      "",
+      `The password on your ${input.companyName} account was changed on ${input.at.toUTCString()}, and every device was signed out.`,
+      "If this was you, nothing more is needed.",
+      "If it was not you, reset your password straight away from the sign-in page and tell your administrator.",
+    ].join("\n"),
+  };
+}

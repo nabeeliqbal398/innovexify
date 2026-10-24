@@ -11,3 +11,4 @@ playwright-report
 .next-e2e
 e2e/.storage
 e2e/.mail-outbox.jsonl
+playwright-results.json

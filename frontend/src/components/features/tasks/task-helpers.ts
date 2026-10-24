@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "@/lib/z";
 
 import type { BadgeTone } from "@/constants/vocab";
 import type { Task } from "@/types/domain";

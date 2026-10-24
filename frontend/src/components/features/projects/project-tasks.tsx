@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { z } from "@/lib/z";
 
 import { QueryState } from "@/components/common/query-state";
 import { Badge } from "@/components/ui/badge";

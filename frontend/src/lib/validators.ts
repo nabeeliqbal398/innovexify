@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "@/lib/z";
 
 export const emailSchema = z
   .string()

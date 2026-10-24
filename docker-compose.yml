@@ -34,10 +34,25 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-innovexify}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-innovexify}?schema=public&connection_limit=${DB_CONNECTION_LIMIT:-10}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET in .env (at least 32 random characters)}
       APP_URL: ${APP_URL:-http://localhost:3000}
-      CORS_ORIGINS: ${APP_URL:-http://localhost:3000}
-      # The web app is the only caller and sits on the same host, so the API sees its address.
-      TRUST_PROXY: ${TRUST_PROXY:-true}
+      # No CORS_ORIGINS: the browser only talks to the web app's own origin (it proxies /api), so the API sends no CORS headers at all.
+      # How many reverse proxies in front of this stack add the client's address to X-Forwarded-For. The web app's own /api proxy adds
+      # NOTHING (it passes the header on as it received it), so with the web port open to the internet directly this must stay false, or any
+      # caller could name their own address and walk around the rate limits. Behind ONE reverse proxy that sets the header (Caddy, or nginx with
+      # $proxy_add_x_forwarded_for): 1. See GO-LIVE.md, item 2.
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      AUTH_THROTTLE_LIMIT: ${AUTH_THROTTLE_LIMIT:-5}
+      REFRESH_THROTTLE_LIMIT: ${REFRESH_THROTTLE_LIMIT:-120}
+      PASSWORD_RESET_TTL_MINUTES: ${PASSWORD_RESET_TTL_MINUTES:-30}
+      # Production sends real email: the API refuses to start with MAIL_TRANSPORT=log, or with smtp and any of these missing.
+      # (To try the stack on one machine without a mail provider: docker-compose.local-mail.yml.)
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      SMTP_ALLOW_PLAINTEXT: ${SMTP_ALLOW_PLAINTEXT:-false}
       STORAGE_DIR: /app/storage
       # true: the container applies pending migrations when it starts (fine for one instance). Set false and run the release step from GO-LIVE.md for more.
       MIGRATE_ON_START: ${MIGRATE_ON_START:-true}
@@ -65,6 +80,13 @@ services:
         condition: service_healthy
     ports:
       - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      # The sign-in page is served by Next itself, so this proves the web server is up (not that the API behind it is: the api has its own check).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
 volumes:
   pgdata:

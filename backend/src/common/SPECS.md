@@ -9,10 +9,24 @@ last number issued. The row lock serialises concurrent callers until they commit
 number back (no gaps from failures). Take counters in a fixed order to avoid deadlocks. A missing row is created on first use.
 
 ## MailService (`mail/`)
-Abstract class (the injection token) with `send(message)`. `LogMailService` logs the email and sends nothing. **SMTP (or a
-provider API) can replace it later** by swapping the provider in `MailModule`; no caller changes. `send` must reject when
-the message could not be handed over: invitations rely on that to roll their transaction back. Templates are in
-`templates.ts` (invitation, email changed, notification).
+Abstract class (the injection token) with `send(message)`. `MailModule` (`mail.module.ts`) picks the implementation from `MAIL_TRANSPORT`:
+`SmtpMailService` (`smtp`, nodemailer; port 465 uses TLS from the first byte, other ports must upgrade with STARTTLS in production unless
+`SMTP_ALLOW_PLAINTEXT=true`) or `LogMailService` (`log`: writes the email to the log and sends nothing; with `MAIL_OUTBOX_FILE`, outside production, it
+also appends each message to a file for browser tests). The environment check (`config/env.ts`) fails the start when `smtp` lacks `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD` or `MAIL_FROM`, and when `log` is used with `NODE_ENV=production`; `createMailService` refuses the same combination again.
+`send` must reject when the message could not be handed over: invitations rely on that to roll their transaction back, and the SMTP service never puts the message
+body or the server's reply in the error. Templates are in `templates.ts` (invitation, email changed, notification, password reset, password changed).
+
+## Health (`../health/`)
+`GET /api/health` (public) is liveness plus a database check, for the container healthcheck. `GET /api/health/ready` (public, throttled like any route, not
+wrapped in the envelope) returns `{ status, checks: { database, storage, mail, scanner }, timestamp }` and `503` when a check fails: database answers, storage is
+writable (a probe file is written and removed), mail is configured (`log` counts as fine outside production), the scanner answers a PING when `VIRUS_SCANNER=clamav`.
+It says pass or fail only: no host, path or error text, which go to the log. `GET /api/health/detail` (Admin only) adds the settings behind it: mail transport,
+SMTP host, port and From (never the password), scanner kind, proxy hops, CORS origins, uptime.
+
+## Logs
+One JSON line per request outcome (pino). `authorization`, `cookie`, `set-cookie`, passwords and tokens are redacted, and `redactUrl` (`utils/redact.ts`) replaces the secret
+segment of `/auth/invitations/:token` and `/auth/reset-password/:token` in logged paths and route parameters, because a logged link would still work.
 
 ## Pagination (`pagination/`)
 `PaginationQueryDto`: `page >= 1` (default 1), `1 <= limit <= 100` (default 20), `sort`, `order`. Invalid values are

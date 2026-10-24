@@ -24,6 +24,26 @@ export class ClamAvScanner extends VirusScanner {
     super();
   }
 
+  /** clamd answers PING with PONG; anything else, or silence, means it cannot be relied on. */
+  ping(): Promise<void> {
+    const { host, port } = this.options;
+    return new Promise<void>((resolve, reject) => {
+      const socket = createConnection({ host, port });
+      const reply: Buffer[] = [];
+      const timer = setTimeout(() => finish(new Error("The virus scanner did not answer a ping.")), Math.min(this.options.timeoutMs, 3000));
+      const finish = (error?: Error): void => {
+        clearTimeout(timer);
+        socket.destroy();
+        if (error) reject(error);
+        else resolve();
+      };
+      socket.on("error", (e) => finish(new Error(`The virus scanner could not be reached: ${e.message}`)));
+      socket.on("connect", () => socket.write("zPING\0"));
+      socket.on("data", (d) => reply.push(d));
+      socket.on("end", () => (Buffer.concat(reply).toString("utf8").replace(/\0/g, "").trim() === "PONG" ? finish() : finish(new Error("The virus scanner gave an unexpected answer to a ping."))));
+    });
+  }
+
   scan(request: ScanRequest): Promise<ScanResult> {
     const { host, port, timeoutMs } = this.options;
     return new Promise<ScanResult>((resolve, reject) => {

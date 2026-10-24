@@ -72,7 +72,7 @@ Every staff row (not clients) in `GET /users` and `GET /users/:id` carries `last
 - **Notification preferences:** five categories (`MESSAGES, DOCUMENTS, STAGE, TICKETS, ANNOUNCEMENTS`), each with `email`
   and `inApp`, both on by default. Only the categories sent are changed.
 - **Audit:** every change writes an `AuditLog` row (category `users`) inside its transaction.
-- SMTP: `LogMailService` only logs the email. Replace the provider in `MailModule` to send for real (see `common/SPECS.md`).
+- Email: `MAIL_TRANSPORT=smtp` sends for real, `log` only logs the email (development and tests; refused in production). See `common/SPECS.md`.
 
 ## Validation rules
 Email valid, trimmed, lower-cased, at most 254. Name 1-120 characters (optional on invite, defaults to the part before the

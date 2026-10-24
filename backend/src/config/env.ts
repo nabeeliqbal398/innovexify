@@ -2,23 +2,25 @@ import { config as loadDotenv } from "dotenv";
 import { expand } from "dotenv-expand";
 import { z } from "zod";
 
+/** An empty value in .env or in compose (`SMTP_HOST=`) means "not set". */
+const blankIsUnset = (value: unknown): unknown => (typeof value === "string" && value.trim() === "" ? undefined : value);
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
-  CORS_ORIGINS: z
-    .string()
-    .default("http://localhost:3000")
-    .transform((v) =>
-      v
-        .split(",")
-        .map((o) => o.trim())
-        .filter(Boolean),
-    ),
+  /**
+   * Comma-separated origins that may call the API from a browser. Behind the web app's /api proxy the browser only ever talks
+   * to its own origin, so no CORS is needed: when this is unset the list is empty in production (and no CORS headers are sent at all)
+   * and http://localhost:3000 in development.
+   */
+  CORS_ORIGINS: z.string().optional(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   THROTTLE_TTL_SECONDS: z.coerce.number().int().min(1).default(60),
   THROTTLE_LIMIT: z.coerce.number().int().min(1).default(100),
-  /** Sign-in, refresh and password routes: requests per minute per client. Keep 5 in production; browser tests raise it. */
+  /** Sign-in (per address and email), accept-invitation, password and reset routes: requests per minute. Keep 5 in production; browser tests raise it. */
   AUTH_THROTTLE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(5),
+  /** /auth/refresh and /auth/logout: requests per minute per client address. Much higher than sign-in: every page load refreshes. */
+  REFRESH_THROTTLE_LIMIT: z.coerce.number().int().min(1).max(100_000).default(120),
   JWT_ACCESS_SECRET: z.string({ error: "JWT_ACCESS_SECRET is not set." }).min(32, "JWT_ACCESS_SECRET must be at least 32 characters. Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('hex'))\""),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
   REFRESH_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
@@ -26,6 +28,24 @@ const envSchema = z.object({
   LOGIN_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(20).default(5),
   LOGIN_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(240).default(15),
   APP_URL: z.string().url().default("http://localhost:3000"),
+  /** How long a password-reset link works. */
+  PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(30),
+  /**
+   * How email leaves the system. "smtp" sends it for real (needs the SMTP_* settings and MAIL_FROM). "log" only writes it to the
+   * application log, so it is for development and tests: the API refuses to start with "log" when NODE_ENV=production.
+   */
+  MAIL_TRANSPORT: z.enum(["smtp", "log"], { error: "MAIL_TRANSPORT must be smtp or log." }).default("log"),
+  SMTP_HOST: z.preprocess(blankIsUnset, z.string().trim().min(1).optional()),
+  SMTP_PORT: z.preprocess(blankIsUnset, z.coerce.number().int().min(1).max(65535).optional()),
+  SMTP_USER: z.preprocess(blankIsUnset, z.string().min(1).optional()),
+  SMTP_PASSWORD: z.preprocess(blankIsUnset, z.string().min(1).optional()),
+  /** The From header, for example `Innovexify <no-reply@your-domain.com>`. */
+  MAIL_FROM: z.preprocess(blankIsUnset, z.string().trim().min(3).optional()),
+  /** In production the connection to the mail server must be encrypted (port 465, or STARTTLS on 587). true allows plain SMTP, for a relay on a trusted private network. */
+  SMTP_ALLOW_PLAINTEXT: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   /** Refresh tokens travel in an httpOnly cookie. Only when this is true are they also accepted and returned in JSON bodies. */
   ALLOW_BODY_REFRESH: z
     .enum(["true", "false"])
@@ -40,11 +60,19 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
-  /** Trust X-Forwarded-For (set to true only behind a reverse proxy you control). */
+  /**
+   * How many reverse proxies in front of this API ADD the client's address to X-Forwarded-For, so it is read from the right place.
+   * false (default) = none: the socket address is used and the header is ignored. 1 = one proxy that writes the header (nginx, Caddy;
+   * the web app's own /api rewrite adds nothing and does not count). 2 = two that each add one. "true" is accepted as 1. Never a blanket
+   * "trust everything": that would let any client choose its own address and walk around every rate limit.
+   */
   TRUST_PROXY: z
-    .enum(["true", "false"])
+    .string()
+    .trim()
+    .toLowerCase()
     .default("false")
-    .transform((v) => v === "true"),
+    .refine((v) => v === "true" || v === "false" || /^([1-9]|10)$/.test(v), "TRUST_PROXY must be false, true (one proxy) or a number of proxies from 1 to 10.")
+    .transform((v): false | number => (v === "false" ? false : v === "true" ? 1 : Number(v))),
   /** Where uploaded files live. Never inside a public or served directory; created at startup. Relative paths resolve from the working directory. */
   STORAGE_DIR: z.string().trim().min(1).default("./storage"),
   /** Largest accepted upload, in megabytes (25 matches the "files over 25 MB" rule in the product). */
@@ -67,6 +95,18 @@ const envSchema = z.object({
     .regex(/^postgres(ql)?:\/\//, "DATABASE_URL must start with postgresql://")
     .refine((v) => !v.includes("${"), "DATABASE_URL still contains an unexpanded ${VARIABLE}. Define POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_PORT and POSTGRES_DB in .env."),
 }).superRefine((env, ctx) => {
+  if (env.MAIL_TRANSPORT === "log" && env.NODE_ENV === "production") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["MAIL_TRANSPORT"],
+      message: "MAIL_TRANSPORT=log only writes email to the log and is not allowed when NODE_ENV=production. Set MAIL_TRANSPORT=smtp and the SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD and MAIL_FROM settings.",
+    });
+  }
+  if (env.MAIL_TRANSPORT === "smtp") {
+    for (const name of ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "MAIL_FROM"] as const) {
+      if (env[name] === undefined) ctx.addIssue({ code: "custom", path: [name], message: `${name} is required when MAIL_TRANSPORT=smtp.` });
+    }
+  }
   // Browsers drop a SameSite=None cookie that is not Secure, so refuse the combination at startup instead of
   // letting every sign-in silently lose its refresh token.
   if (env.REFRESH_COOKIE_SAMESITE === "none" && env.NODE_ENV !== "production" && !env.REFRESH_COOKIE_SECURE) {
@@ -76,9 +116,25 @@ const envSchema = z.object({
       message: 'REFRESH_COOKIE_SAMESITE=none needs a Secure cookie. Run in production, or set REFRESH_COOKIE_SECURE=true (HTTPS only), or use strict or lax.',
     });
   }
-});
+}).transform((env) => ({
+  ...env,
+  CORS_ORIGINS: (env.CORS_ORIGINS ?? (env.NODE_ENV === "production" ? "" : "http://localhost:3000"))
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+}));
 
 export type Env = z.infer<typeof envSchema>;
+
+/** Validate a set of variables (process.env, or a test-supplied set). Fails with a readable list of problems. */
+export function parseEnv(source: NodeJS.ProcessEnv): Env {
+  const parsed = envSchema.safeParse(source);
+  if (!parsed.success) {
+    const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "env"}: ${i.message}`);
+    throw new Error(`Invalid environment configuration:\n${lines.join("\n")}\nCopy .env.example to .env and fill it in.`);
+  }
+  return parsed.data;
+}
 
 /**
  * Read and validate the environment once, at startup. Variables in .env may reference each other
@@ -86,10 +142,5 @@ export type Env = z.infer<typeof envSchema>;
  */
 export function loadEnv(): Env {
   expand(loadDotenv({ quiet: true }));
-  const parsed = envSchema.safeParse(process.env);
-  if (!parsed.success) {
-    const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "env"}: ${i.message}`);
-    throw new Error(`Invalid environment configuration:\n${lines.join("\n")}\nCopy .env.example to .env and fill it in.`);
-  }
-  return parsed.data;
+  return parseEnv(process.env);
 }

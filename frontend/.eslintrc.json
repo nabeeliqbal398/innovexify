@@ -2,6 +2,11 @@
   "extends": ["next/core-web-vitals", "next/typescript"],
   "rules": {
     "@typescript-eslint/no-explicit-any": "error",
-    "no-console": "error"
-  }
+    "no-console": "error",
+    "no-restricted-imports": [
+      "error",
+      { "paths": [{ "name": "zod", "message": "Import { z } from \"@/lib/z\": it turns off zod's eval-based parser before any schema is built (the Content-Security-Policy has no unsafe-eval)." }] }
+    ]
+  },
+  "overrides": [{ "files": ["src/lib/z.ts"], "rules": { "no-restricted-imports": "off" } }]
 }

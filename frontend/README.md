@@ -36,9 +36,29 @@ CORS and the API's `SameSite=Strict` refresh cookie is first-party. Next reads t
 
 ### Browser tests
 
-`npm run test:e2e` resets the **development database** (`npm run db:reset` in `../backend`), builds both apps, starts the API on port 4100 and the web app on port 3100
-(so a dev server on 3000/4000 is left alone) and runs headless Chromium. Failures keep a screenshot and a trace in `test-results/`; the HTML report is in `playwright-report/`.
-`E2E_SKIP_RESET=1` keeps the current data when you re-run one test. Docker must be running (the database).
+`npm run test:e2e` builds both apps, then Playwright runs headless Chromium against the real API on its **own database, `innovexify_e2e`**
+(never the development one). Global setup (`e2e/global-setup.ts`) creates that database from scratch, applies every migration, loads the demo data and
+starts the API on it (port 4100); the web app runs on port 3100, so a dev server on 3000/4000 is left alone. Failures keep a screenshot and a trace in
+`test-results/`; the HTML report is in `playwright-report/`.
+
+**Safety:** the run refuses to start unless the database name ends in `_e2e` or `_test`, so it can never wipe real data. Pointed at the development database:
+
+```
+E2E_DATABASE_URL=postgresql://innovexify:...@localhost:5432/innovexify npm run test:e2e
+The browser tests refused to run: it was pointed at the database "innovexify", which is not a test database.
+These tests delete data. The database name must end in _e2e or _test (for example innovexify_e2e).
+```
+
+`E2E_SKIP_BUILD=1` reuses the last builds when you re-run one test. `E2E_DATABASE_URL` points the run at another throw-away database (CI does). Docker must be
+running (the database). To check that nothing was skipped: `npm run test:e2e -- --reporter=list,json` with `PLAYWRIGHT_JSON_OUTPUT_NAME=playwright-results.json`,
+then `node e2e/assert-none-skipped.mjs` (CI does this).
+
+### Security headers
+
+`next.config.mjs` sets the static headers (`X-Content-Type-Options`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, `X-Frame-Options`, HSTS in production; `no-store` on
+reset and invitation links). The `Content-Security-Policy` is built per request in `src/middleware.ts` (`src/lib/csp.ts`) because it carries a nonce: only our own scripts and
+inline scripts with that nonce run (Next's bootstrap and the theme-init script in `layout.tsx`), `frame-ancestors 'none'`, no `unsafe-eval`. Styles allow inline (React writes
+`style=""` attributes); `zod-config.ts` turns off zod's `new Function` parser so the policy needs no `unsafe-eval`. `e2e/security.spec.ts` fails on any violation.
 
 ## Structure
 - `src/store/api/*`: RTK Query endpoints, one file per area, on top of `base.ts` (in-memory access token, one shared refresh on a 401, one retry, never a loop).

@@ -4,6 +4,7 @@ import { PinoLogger } from "nestjs-pino";
 import { tap, type Observable } from "rxjs";
 
 import type { RequestContext } from "../interfaces/request-context";
+import { redactUrl } from "../utils/redact";
 
 /** One structured log line per handled request: who, what, how long, and the outcome. */
 @Injectable()
@@ -25,7 +26,7 @@ export class LoggingInterceptor implements NestInterceptor {
             requestId: request.id,
             userId: request.user?.id,
             method: request.method,
-            path: request.originalUrl,
+            path: redactUrl(request.originalUrl),
             status: response.statusCode,
             ms: Date.now() - started,
           },

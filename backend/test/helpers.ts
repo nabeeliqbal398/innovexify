@@ -13,11 +13,26 @@ import { LocalDiskStorage, StorageService } from "../src/common/storage/storage.
 import { TokenService } from "../src/modules/auth/service/token.service";
 import { configureApp } from "../src/app.setup";
 import { AppConfig } from "../src/config/app-config";
+import { setupDocs } from "../src/config/swagger";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { findForbiddenFields, violations } from "./forbidden-fields";
 import { ProbeController } from "./probe.controller";
 
 export const PASSWORD = "Correct-Horse-9Battery";
+
+/**
+ * A production-mode environment that boots: NODE_ENV=production needs real SMTP settings (never contacted by these tests), because the API
+ * refuses the log mailer in production.
+ */
+export const PRODUCTION_ENV: Record<string, string> = {
+  NODE_ENV: "production",
+  MAIL_TRANSPORT: "smtp",
+  SMTP_HOST: "smtp.invalid",
+  SMTP_PORT: "587",
+  SMTP_USER: "mailer",
+  SMTP_PASSWORD: "super-secret-smtp-password",
+  MAIL_FROM: "Innovexify <no-reply@example.com>",
+};
 let passwordHash: Promise<string> | undefined;
 const hashOnce = (): Promise<string> => (passwordHash ??= argon2.hash(PASSWORD, { type: argon2.argon2id }));
 
@@ -35,6 +50,7 @@ export interface TestApp {
 export async function createApp(
   envOverrides: Record<string, string> = {},
   configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder,
+  options: { docs?: boolean } = {},
 ): Promise<TestApp> {
   const saved = Object.fromEntries(Object.keys(envOverrides).map((k) => [k, process.env[k]]));
   Object.assign(process.env, envOverrides);
@@ -51,6 +67,8 @@ export async function createApp(
     const moduleRef = await builder.compile();
     const app = moduleRef.createNestApplication();
     configureApp(app, app.get(AppConfig).env);
+    // The interactive docs are mounted by main.ts, not configureApp: a test asks for them to check the production switch.
+    if (options.docs) setupDocs(app, app.get(AppConfig).env);
     // Every JSON response is scanned for fields that must never leave the server (hashes, storage keys, refresh tokens).
     app.use((_req: unknown, res: { json: (body: unknown) => unknown; req?: { originalUrl?: string } }, next: () => void) => {
       const original = res.json.bind(res);
@@ -93,6 +111,10 @@ let dataTables: Promise<string[]> | undefined;
  * quicker than TRUNCATE ... CASCADE on this database, and needs no table list to maintain as modules are added.
  */
 export async function resetDatabase(prisma: PrismaService): Promise<void> {
+  // The last line of defence: whatever the URL said, never delete rows from a database that is not a test database.
+  const [{ current_database: connected }] = await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()`;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+  require("../scripts/assert-test-database").assertTestDatabase(`postgresql://x/${connected}`, "resetDatabase");
   dataTables ??= prisma
     .$queryRaw<Array<{ tablename: string }>>`SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT IN ('_prisma_migrations', 'Company', 'Service')`
     .then((rows) => rows.map((r) => r.tablename));
@@ -212,6 +234,14 @@ export class RecordingMail extends MailService {
     if (this.failWith) return Promise.reject(this.failWith);
     this.sent.push(message);
     return Promise.resolve();
+  }
+
+  /** The password-reset link's token from the most recent reset email sent to an address. */
+  resetTokenFor(email: string): string {
+    const mail = [...this.sent].reverse().find((m) => m.kind === "password-reset" && m.to === email);
+    const token = mail ? /\/reset-password\/([\w-]+)/.exec(mail.text)?.[1] : undefined;
+    if (!token) throw new Error(`No password reset email was sent to ${email}.`);
+    return token;
   }
 
   /** The invitation link's token from the most recent invitation email sent to an address. */

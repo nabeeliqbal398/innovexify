@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
 import type { Params } from "nestjs-pino";
+import { stdSerializers } from "pino";
+
+import { redactUrl } from "../common/utils/redact";
 
 import type { Env } from "./env";
 
@@ -18,6 +21,8 @@ export const REDACTED_PATHS = [
   "*.tokenHash",
   "*.accessToken",
   "*.refreshToken",
+  // Invitation and password-reset tokens travel in the URL (see redactUrl); the router also exposes them as a route parameter.
+  "req.params.token",
 ];
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,64}$/;
@@ -29,6 +34,15 @@ export function buildLoggerParams(env: Env): Params {
       // Each request is logged once by LoggingInterceptor, so the built-in access log stays off.
       autoLogging: false,
       redact: { paths: REDACTED_PATHS, censor: "[REDACTED]" },
+      // Every log line made during a request carries the request: keep one-time links out of its URL.
+      serializers: {
+        req: (req: Parameters<typeof stdSerializers.req>[0]) => {
+          const serialized = stdSerializers.req(req);
+          // Route parameters repeat the path (the global middleware route captures it whole as parameter "0").
+          const params = Object.fromEntries(Object.entries((serialized as { params?: Record<string, unknown> }).params ?? {}).map(([key, value]) => [key, typeof value === "string" ? redactUrl(value) : value]));
+          return { ...serialized, url: redactUrl(serialized.url), params };
+        },
+      },
       genReqId: (req, res) => {
         const incoming = req.headers["x-request-id"];
         const id = typeof incoming === "string" && REQUEST_ID_PATTERN.test(incoming) ? incoming : randomUUID();

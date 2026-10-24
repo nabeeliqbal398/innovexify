@@ -35,7 +35,7 @@ const PANEL_POINTS = [
 ];
 
 /** Left brand panel and the right column every sign-in page shares. */
-function AuthFrame({ children }: { children: ReactNode }) {
+export function AuthFrame({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-wrap bg-background">
       <section
@@ -160,7 +160,16 @@ function LoginForm() {
           {...register("email", { onChange: () => setProblem(null) })}
         />
       </AuthField>
-      <AuthField id="login-password" label="Password" error={errors.password?.message}>
+      <AuthField
+        id="login-password"
+        label="Password"
+        error={errors.password?.message}
+        aside={
+          <Link href="/forgot-password" className="text-sm text-primary-soft-foreground">
+            Forgot password?
+          </Link>
+        }
+      >
         <PasswordInput
           id="login-password"
           autoComplete="current-password"
@@ -172,7 +181,6 @@ function LoginForm() {
         {isSubmitting ? <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : null}
         {isSubmitting ? "Signing in…" : "Sign in"}
       </button>
-      <p className="text-center text-sm text-muted-foreground">Forgotten your password? Ask your administrator to send a new invitation.</p>
     </form>
   );
 }

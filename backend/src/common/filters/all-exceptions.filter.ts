@@ -7,6 +7,7 @@ import { AppException } from "../exceptions/app.exception";
 import type { RequestContext } from "../interfaces/request-context";
 import type { ErrorEnvelope, FieldError } from "../responses/api-response";
 import { mapPrismaError } from "../utils/prisma-errors";
+import { redactUrl } from "../utils/redact";
 
 interface Resolved {
   status: number;
@@ -45,7 +46,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       requestId,
       userId: request.user?.id,
       method: request.method,
-      path: request.originalUrl,
+      path: redactUrl(request.originalUrl),
       status: resolved.status,
       errorCode: resolved.errorCode,
     };

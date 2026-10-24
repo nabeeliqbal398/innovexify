@@ -6,7 +6,7 @@ import { Logger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { configureApp } from "./app.setup";
 import { AppConfig } from "./config/app-config";
-import { setupSwagger } from "./config/swagger";
+import { setupDocs } from "./config/swagger";
 
 async function bootstrap(): Promise<void> {
   // AppConfig validates the environment when it is created, so mistakes fail fast with a clear message.
@@ -17,7 +17,7 @@ async function bootstrap(): Promise<void> {
 
   configureApp(app, env);
 
-  if (!isProduction) setupSwagger(app);
+  setupDocs(app, env);
 
   await app.listen(env.PORT);
   logger.log(`API listening on port ${env.PORT}${isProduction ? "" : " (docs at /api/docs)"}`);

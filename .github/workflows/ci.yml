@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+  # Throw-away values for a throw-away database in this job only. Real secrets never go in this file.
+  POSTGRES_USER: innovexify
+  POSTGRES_PASSWORD: ci-only-postgres-password
+  POSTGRES_DB: innovexify
+  POSTGRES_HOST: localhost
+  POSTGRES_PORT: "5432"
+  DATABASE_URL: postgresql://innovexify:ci-only-postgres-password@localhost:5432/innovexify?schema=public
+  JWT_ACCESS_SECRET: ci-only-jwt-secret-0123456789abcdef0123456789abcdef
+  SEED_PASSWORD: Ci-Only-Seed-Passw0rd
+  # Tells scripts/setup-test-db.js the database is a service container, not the Docker Compose one on a laptop.
+  CI: "true"
+
+jobs:
+  secrets:
+    name: Secret scan (gitleaks, whole history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Config (.gitleaks.toml) allows only documentation placeholders and the fake values the tests make up.
+      - name: Scan every commit
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest git /repo --redact --no-banner --log-opts="--all"
+      - name: No .env file is tracked anywhere (only .env.example)
+        run: |
+          if git ls-files | grep -E '(^|/)\.env(\.|$)' | grep -v -E '(^|/)\.env\.example$'; then echo "A .env file is tracked"; exit 1; fi
+
+  backend:
+    name: Backend (tsc, lint, unit, e2e, build, audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: innovexify
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          POSTGRES_DB: innovexify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U innovexify -d innovexify"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npx prisma generate
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end tests (database innovexify_test)
+        run: npm run test:e2e
+      - name: Build
+        run: npm run build
+      - name: Audit production dependencies (fails on high)
+        run: npm audit --omit=dev --audit-level=high
+
+  frontend:
+    name: Frontend (tsc, lint, Vitest, build, audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests (Vitest)
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Audit production dependencies (fails on high)
+        run: npm audit --omit=dev --audit-level=high
+
+  playwright:
+    name: Browser tests (Playwright, database innovexify_e2e)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: innovexify
+          POSTGRES_PASSWORD: ci-only-postgres-password
+          POSTGRES_DB: innovexify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U innovexify -d innovexify"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - name: Install backend
+        working-directory: backend
+        run: npm ci --legacy-peer-deps && npx prisma generate
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci --legacy-peer-deps
+      - name: Install the browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Run the whole suite (zero skipped is enforced below)
+        working-directory: frontend
+        run: npm run test:e2e -- --reporter=list,json
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: playwright-results.json
+      - name: Fail if any test was skipped
+        if: always()
+        working-directory: frontend
+        run: node e2e/assert-none-skipped.mjs playwright-results.json
+      - name: Keep the report when something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7

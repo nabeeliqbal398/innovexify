@@ -20,6 +20,15 @@ const invitationInclude = {
 
 export type InvitationRecord = Prisma.InvitationTokenGetPayload<{ include: typeof invitationInclude }>;
 
+const passwordResetInclude = {
+  user: { select: { id: true, email: true, name: true, role: true, status: true, deletedAt: true } },
+} satisfies Prisma.PasswordResetTokenInclude;
+
+export type PasswordResetRecord = Prisma.PasswordResetTokenGetPayload<{ include: typeof passwordResetInclude }>;
+
+/** Thrown inside the reset transaction to roll it back when the account stopped being resettable half-way. */
+class ResetRolledBack extends Error {}
+
 /** All database access for authentication. Services hold the rules; this holds the queries. */
 @Injectable()
 export class AuthRepository {
@@ -129,5 +138,60 @@ export class AuthRepository {
 
   notifyUser(userId: string, text: string, link: string) {
     return this.prisma.notification.create({ data: { userId, text, link } });
+  }
+
+  // ---- Password reset ----------------------------------------------------------------------------------------------
+
+  findResettableUser(email: string) {
+    return this.prisma.user.findFirst({ where: { email, deletedAt: null }, select: { id: true, email: true, name: true, role: true, status: true } });
+  }
+
+  /** When this person last asked for a reset link (used or not), to stop one address being mailed over and over. */
+  async latestPasswordResetAt(userId: string): Promise<Date | null> {
+    const latest = await this.prisma.passwordResetToken.findFirst({ where: { userId }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
+    return latest?.createdAt ?? null;
+  }
+
+  /** A harmless round trip, so a request for an account that cannot reset costs the database about what one that can does. */
+  async decoyRoundTrip(): Promise<void> {
+    await this.prisma.$queryRaw`SELECT 1`;
+  }
+
+  /** Issue a link and retire this person's earlier unused ones, in one transaction. */
+  async createPasswordReset(userId: string, tokenHash: string, expiresAt: Date, requestedIp?: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.passwordResetToken.updateMany({ where: { userId, usedAt: null }, data: { usedAt: new Date() } });
+      return tx.passwordResetToken.create({ data: { userId, tokenHash, expiresAt, requestedIp: requestedIp?.slice(0, 64) } });
+    });
+  }
+
+  findPasswordReset(tokenHash: string): Promise<PasswordResetRecord | null> {
+    return this.prisma.passwordResetToken.findUnique({ where: { tokenHash }, include: passwordResetInclude });
+  }
+
+  /**
+   * Burn the link, set the password and end every session of the person, atomically. "used" when a concurrent request got
+   * there first (or the link expired in the meantime); "inactive" when the account was suspended or removed meanwhile.
+   */
+  async completePasswordReset(resetId: string, userId: string, passwordHash: string): Promise<"used" | "inactive" | { sessionsEnded: number }> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const now = new Date();
+        const burned = await tx.passwordResetToken.updateMany({ where: { id: resetId, usedAt: null, expiresAt: { gt: now } }, data: { usedAt: now } });
+        if (burned.count !== 1) return "used" as const;
+        const updated = await tx.user.updateMany({
+          where: { id: userId, status: "ACTIVE", deletedAt: null },
+          data: { passwordHash, failedLoginCount: 0, lockedUntil: null },
+        });
+        if (updated.count !== 1) throw new ResetRolledBack();
+        await tx.passwordResetToken.updateMany({ where: { userId, usedAt: null }, data: { usedAt: now } });
+        const families = await tx.refreshToken.findMany({ where: { userId, revokedAt: null }, select: { familyId: true }, distinct: ["familyId"] });
+        await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: now } });
+        return { sessionsEnded: families.length };
+      });
+    } catch (error) {
+      if (error instanceof ResetRolledBack) return "inactive";
+      throw error;
+    }
   }
 }

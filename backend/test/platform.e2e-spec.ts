@@ -1,4 +1,4 @@
-import { createApp, freshIp, login, makeUser, refreshCookie, resetDatabase, withCookie, type TestApp } from "./helpers";
+import { createApp, freshIp, PRODUCTION_ENV, login, makeUser, refreshCookie, resetDatabase, withCookie, type TestApp } from "./helpers";
 import { REASON } from "../src/common/permissions/permissions";
 
 describe("platform (e2e)", () => {
@@ -141,7 +141,7 @@ describe("platform (e2e)", () => {
     });
 
     it("marks the cookie Secure in production, and still httpOnly and SameSite", async () => {
-      const t = await createApp({ NODE_ENV: "production" });
+      const t = await createApp({ ...PRODUCTION_ENV });
       try {
         await resetDatabase(t.prisma);
         await makeUser(t.prisma, { email: "admin@test.dev", role: "ADMIN" });
@@ -186,7 +186,7 @@ describe("platform (e2e)", () => {
     });
 
     it("accepts SameSite=none in production, where the cookie is always Secure", async () => {
-      const t = await createApp({ REFRESH_COOKIE_SAMESITE: "none", NODE_ENV: "production" });
+      const t = await createApp({ ...PRODUCTION_ENV, REFRESH_COOKIE_SAMESITE: "none" });
       try {
         await resetDatabase(t.prisma);
         await makeUser(t.prisma, { email: "admin@test.dev", role: "ADMIN" });

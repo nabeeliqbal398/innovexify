@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { Injectable } from "@nestjs/common";
 import { JwtService, TokenExpiredError } from "@nestjs/jwt";
@@ -38,5 +38,12 @@ export class TokenService {
 
   hash(token: string): string {
     return createHash("sha256").update(token).digest("hex");
+  }
+
+  /** Does this raw token hash to the stored hash? Compared in constant time, so the answer does not leak how many characters matched. */
+  matches(rawToken: string, storedHash: string): boolean {
+    const given = Buffer.from(this.hash(rawToken), "utf8");
+    const stored = Buffer.from(storedHash, "utf8");
+    return given.length === stored.length && timingSafeEqual(given, stored);
   }
 }

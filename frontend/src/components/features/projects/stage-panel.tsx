@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { z } from "@/lib/z";
 
 import { isRollback, needsFilingNumber } from "@/components/features/cases/case-rules";
 import { Button } from "@/components/ui/button";

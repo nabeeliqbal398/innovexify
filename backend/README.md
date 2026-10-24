@@ -30,6 +30,8 @@ When the database is down it returns **503** with a clear message.
 | `npm run db:deploy` | `prisma migrate deploy` (production and CI; never `db push`) |
 | `npm run db:seed` | `prisma db seed` (idempotent) |
 | `npm run db:studio` | Prisma Studio |
+| `npm run test:e2e` | Creates (if needed) and migrates `innovexify_test`, then runs the e2e tests against it. **Refuses any database whose name does not end in `_test` or `_e2e`.** |
+| `npm run test:db:e2e` | Drops and recreates `innovexify_e2e`, the browser tests' database (the frontend's Playwright global setup does this itself) |
 
 pgAdmin is optional: `docker compose --profile tools up -d pgadmin` (http://127.0.0.1:5050).
 
@@ -67,8 +69,10 @@ and the database port is not published.
   is `TICKET_REOPEN_DAYS`. In-memory caches and limits are per instance; see `src/common/SPECS.md` for the Redis swap.
 - Also for the web app: `GET /users/directory` (staff pickers), `GET /dashboard/nav-counts`, client-list extras (`lastContactAt`, `nextFollowUp`, `onboarding`, `?filter=`), staff `workload`, and `GET /services` with `activeCases`. `MAIL_OUTBOX_FILE` (development only) appends every email to a file, and `AUTH_THROTTLE_LIMIT` raises the sign-in limit for browser tests. `VIRUS_SCANNER=clamav` scans uploads with ClamAV (`GO-LIVE.md`).
 - Uploaded documents are stored by `StorageService` (local disk in `STORAGE_DIR`). See "File storage" below.
-- Invitation emails go through `MailService`. In development `LogMailService` writes the email, including the invitation
-  link, to the API log instead of sending it; replace it in `MailModule` to use SMTP.
+- Email goes through `MailService`, chosen by `MAIL_TRANSPORT`: `smtp` sends through your server (nodemailer; `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+  `SMTP_PASSWORD` and `MAIL_FROM`, all required: the API will not start without them), `log` writes the email (links included) to the API log and sends nothing.
+  `log` is for development and tests only: **the API refuses to start with it when `NODE_ENV=production`**. Invitations, password-reset links and the
+  "your password was changed" notice use it. `GET /api/health/detail` (Admin) reports whether mail is configured; `GET /api/health/ready` is the public readiness probe for uptime monitoring.
 - Seeded accounts (for example `sarah.bennett@example.com`, Admin) all use the `SEED_PASSWORD` from your `.env`.
 
 ## Configuration

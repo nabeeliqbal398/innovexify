@@ -206,6 +206,7 @@ model User {
   notificationPreferences NotificationPreference[]
   refreshTokens           RefreshToken[]
   invitationTokens        InvitationToken[]
+  passwordResetTokens     PasswordResetToken[]
   notifications           Notification[]
   conversationReads       ConversationRead[]
   clientCases             Case[]                   @relation("CaseClient")
@@ -310,6 +311,22 @@ model InvitationToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// A single-use link that lets an ACTIVE person choose a new password. Only the SHA-256 hash of the token is stored.
+model PasswordResetToken {
+  id          String    @id @default(cuid())
+  userId      String
+  tokenHash   String    @unique @db.VarChar(64)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  requestedIp String?   @db.VarChar(64)
+  createdAt   DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

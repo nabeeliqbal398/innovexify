@@ -665,12 +665,12 @@ async function seedSystem(): Promise<void> {
   for (const [key, value] of counters) await prisma.counter.upsert({ where: { key }, update: {}, create: { key, value } });
 }
 
-/** Demo data and a shared demo password must never land in a production database by accident. */
+/** Demo data and a shared demo password must never land in a production database: there is no override. */
 function assertSeedingAllowed(): void {
-  if (process.env.NODE_ENV === "production" && process.env.ALLOW_PROD_SEED !== "true") {
+  if (process.env.NODE_ENV === "production") {
     throw new Error(
-      "Refusing to seed: NODE_ENV is production. Seeding writes demo accounts with a shared password. " +
-        "If you really mean it, run again with ALLOW_PROD_SEED=true.",
+      "Refusing to seed: NODE_ENV is production. Seeding writes demo accounts with a shared password and there is no override. " +
+        "Create the first Admin with `npm run admin:create` instead (see GO-LIVE.md).",
     );
   }
 }

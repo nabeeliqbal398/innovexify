@@ -6,7 +6,7 @@ import { LoggerModule } from "nestjs-pino";
 import { PermissionsModule } from "./common/permissions/permissions.guard";
 import { AuditModule } from "./common/audit/audit.service";
 import { CounterModule } from "./common/counter/counter.service";
-import { MailModule } from "./common/mail/mail.service";
+import { MailModule } from "./common/mail/mail.module";
 import { StorageModule } from "./common/storage/storage.module";
 import { RateLimitModule } from "./common/rate-limit/rate-limit.guard";
 import { NotificationsModule } from "./common/notifications/notification.service";
@@ -17,6 +17,7 @@ import { TransformInterceptor } from "./common/responses/transform.interceptor";
 import { AppConfig, AppConfigModule } from "./config/app-config";
 import { buildLoggerParams } from "./config/logger.config";
 import { HealthController } from "./health/health.controller";
+import { HealthService } from "./health/health.service";
 import { AccessMatrixModule } from "./modules/access/access.module";
 import { AnnouncementsModule } from "./modules/announcements/announcements.module";
 import { AuditLogModule } from "./modules/audit/audit-log.module";
@@ -86,6 +87,7 @@ import { PrismaModule } from "./prisma/prisma.module";
   ],
   controllers: [HealthController],
   providers: [
+    HealthService,
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_INTERCEPTOR, useClass: RequestIdInterceptor },

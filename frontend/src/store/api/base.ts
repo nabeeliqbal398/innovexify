@@ -62,7 +62,7 @@ function refreshOnce(api: Parameters<ApiBaseQuery>[1], extra: Parameters<ApiBase
   return refreshInFlight;
 }
 
-const NO_REFRESH_URLS = ["/auth/login", "/auth/refresh", "/auth/logout", "/auth/accept-invitation"];
+const NO_REFRESH_URLS = ["/auth/login", "/auth/refresh", "/auth/logout", "/auth/accept-invitation", "/auth/forgot-password", "/auth/reset-password"];
 const urlOf = (args: string | FetchArgs): string => (typeof args === "string" ? args : args.url);
 
 /**

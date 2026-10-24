@@ -9,12 +9,14 @@ import type { Env } from "./config/env";
 /** Everything main.ts and the e2e tests share, so tests exercise the real HTTP setup. */
 export function configureApp(app: INestApplication, env: Env): void {
   const express = app as NestExpressApplication;
-  if (env.TRUST_PROXY) express.set("trust proxy", true);
+  // A hop count, never `true`: with `true` the leftmost X-Forwarded-For entry is trusted, and that one is written by the client.
+  if (env.TRUST_PROXY) express.set("trust proxy", env.TRUST_PROXY);
   // JSON bodies are small except a company logo sent as a data URL (200 KB of image is about 270 KB of base64).
   express.useBodyParser("json", { limit: "400kb" });
   app.use(helmet());
   app.use(cookieParser());
-  app.enableCors({ origin: env.CORS_ORIGINS, credentials: true });
+  // No allowed origins (the production default) means no CORS at all: the browser only calls its own origin through the web app's proxy.
+  if (env.CORS_ORIGINS.length > 0) app.enableCors({ origin: env.CORS_ORIGINS, credentials: true });
   app.setGlobalPrefix("api");
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: "1" });
   app.useGlobalPipes(createValidationPipe());

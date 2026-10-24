@@ -1,0 +1,14 @@
+title = "Innovexify secret scanning"
+
+[extend]
+useDefault = true
+
+# Example commands in the documentation (older commits). They show the shape of a value to choose, they are not credentials, and nothing uses them.
+[[allowlists]]
+description = "Placeholder passphrases in README.md and GO-LIVE.md examples"
+regexes = ['''^(Choose-A-Long-Passphrase-1|a-long-unique-passphrase-1A)$''']
+
+# Fake tokens and passwords that the tests make up so they can check they never reach a log or a response.
+[[allowlists]]
+description = "Test fixtures"
+paths = ['''(^|/)backend/test/.*''', '''(^|/)backend/src/.*\.spec\.ts$''', '''(^|/)frontend/(tests|e2e)/.*''']

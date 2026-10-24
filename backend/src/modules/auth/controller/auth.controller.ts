@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swa
 import type { Response } from "express";
 
 import { CurrentUser, Public } from "../../../common/decorators/auth.decorators";
-import { AuthThrottle } from "../../../common/decorators/throttle.decorators";
+import { AuthEmailThrottle, AuthThrottle, SessionThrottle } from "../../../common/decorators/throttle.decorators";
 import { AppException, UnauthenticatedException } from "../../../common/exceptions";
 import type { AuthenticatedUser, RequestContext } from "../../../common/interfaces/request-context";
 import { ApiResponse } from "../../../common/responses/api-response";
@@ -11,14 +11,17 @@ import {
   AcceptInvitationDto,
   AuthSessionDto,
   ChangePasswordDto,
+  ForgotPasswordDto,
   InvitationLookupDto,
   LoginDto,
   RefreshDto,
+  ResetPasswordDto,
   SessionUserDto,
 } from "../dto/auth.dto";
 import type { AuthSession, ClientContext } from "../interfaces/auth.interfaces";
 import { AuthService } from "../service/auth.service";
 import { InvitationService } from "../service/invitation.service";
+import { FORGOT_PASSWORD_MESSAGE, PasswordResetService } from "../service/password-reset.service";
 import { RefreshCookieService } from "../service/refresh-cookie.service";
 
 function contextOf(request: RequestContext): ClientContext {
@@ -35,6 +38,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly invitations: InvitationService,
+    private readonly passwordReset: PasswordResetService,
     private readonly cookie: RefreshCookieService,
   ) {}
 
@@ -49,7 +53,7 @@ export class AuthController {
   }
 
   @Public()
-  @AuthThrottle()
+  @AuthEmailThrottle()
   @Post("login")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Sign in with email and password. Sets the refresh token as an httpOnly cookie." })
@@ -60,7 +64,7 @@ export class AuthController {
   }
 
   @Public()
-  @AuthThrottle()
+  @SessionThrottle()
   @Post("refresh")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Exchange the refresh cookie for a new token pair (the old one stops working)" })
@@ -79,7 +83,7 @@ export class AuthController {
   }
 
   @Public()
-  @AuthThrottle()
+  @SessionThrottle()
   @Post("logout")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "End this session and clear the cookie" })
@@ -136,5 +140,33 @@ export class AuthController {
   async acceptInvitation(@Body() dto: AcceptInvitationDto, @Req() request: RequestContext, @Res({ passthrough: true }) response: Response) {
     const session = await this.invitations.accept(dto.token, dto.password, contextOf(request));
     return ApiResponse.of(this.present(session, response), "Account created. You're signed in.");
+  }
+
+  @Public()
+  @AuthEmailThrottle()
+  @Post("forgot-password")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Ask for a password reset link. Answers the same way whether or not the account exists." })
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() request: RequestContext) {
+    await this.passwordReset.request(dto.email, contextOf(request));
+    return ApiResponse.of(null, FORGOT_PASSWORD_MESSAGE);
+  }
+
+  @Public()
+  @AuthThrottle()
+  @Get("reset-password/:token")
+  @ApiOperation({ summary: "Check a password reset link before showing the new-password form" })
+  lookupPasswordReset(@Param("token") token: string) {
+    return this.passwordReset.lookup(token);
+  }
+
+  @Public()
+  @AuthThrottle()
+  @Post("reset-password")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Choose a new password from a reset link. Ends every session; sign in again afterwards." })
+  async resetPassword(@Body() dto: ResetPasswordDto, @Req() request: RequestContext) {
+    const { sessionsEnded } = await this.passwordReset.reset(dto.token, dto.password, contextOf(request));
+    return ApiResponse.of({ sessionsEnded }, "Password changed. Sign in with your new password.");
   }
 }
