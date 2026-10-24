@@ -19,8 +19,10 @@ const envSchema = z.object({
   THROTTLE_LIMIT: z.coerce.number().int().min(1).default(100),
   /** Sign-in (per address and email), accept-invitation, password and reset routes: requests per minute. Keep 5 in production; browser tests raise it. */
   AUTH_THROTTLE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(5),
-  /** /auth/refresh and /auth/logout: requests per minute per client address. Much higher than sign-in: every page load refreshes. */
+  /** Token renewals per minute per SESSION (refresh-token family). Every page load renews, so this is generous. */
   REFRESH_THROTTLE_LIMIT: z.coerce.number().int().min(1).max(100_000).default(120),
+  /** /auth/refresh and /auth/logout per client ADDRESS: a backstop against floods, high enough for a large office behind one address. */
+  REFRESH_IP_CEILING: z.coerce.number().int().min(1).max(1_000_000).default(1200),
   JWT_ACCESS_SECRET: z.string({ error: "JWT_ACCESS_SECRET is not set." }).min(32, "JWT_ACCESS_SECRET must be at least 32 characters. Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('hex'))\""),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
   REFRESH_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),

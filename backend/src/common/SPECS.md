@@ -22,7 +22,9 @@ body or the server's reply in the error. Templates are in `templates.ts` (invita
 wrapped in the envelope) returns `{ status, checks: { database, storage, mail, scanner }, timestamp }` and `503` when a check fails: database answers, storage is
 writable (a probe file is written and removed), mail is configured (`log` counts as fine outside production), the scanner answers a PING when `VIRUS_SCANNER=clamav`.
 It says pass or fail only: no host, path or error text, which go to the log. `GET /api/health/detail` (Admin only) adds the settings behind it: mail transport,
-SMTP host, port and From (never the password), scanner kind, proxy hops, CORS origins, uptime.
+SMTP host, port and From (never the password), scanner kind, proxy hops, CORS origins, uptime, and `client`: the address the server sees for
+the caller (`ip`), the socket address (`socketAddress`, the proxy when there is one), the raw `X-Forwarded-For` and the `TRUST_PROXY` value, so an operator can
+check the setting after a deploy (GO-LIVE.md item 2).
 
 ## Logs
 One JSON line per request outcome (pino). `authorization`, `cookie`, `set-cookie`, passwords and tokens are redacted, and `redactUrl` (`utils/redact.ts`) replaces the secret

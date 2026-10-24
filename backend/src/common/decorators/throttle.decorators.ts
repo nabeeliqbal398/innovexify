@@ -33,9 +33,9 @@ export const AuthEmailThrottle = (): MethodDecorator & ClassDecorator =>
   applyDecorators(Throttle({ default: { limit: () => Number(process.env.AUTH_THROTTLE_LIMIT) || 5, ttl: WINDOW_MS, getTracker: byAddressAndEmail } }));
 
 /**
- * Session upkeep (renewing the access token on every page load, signing out): `REFRESH_THROTTLE_LIMIT` per minute per
- * client address (default 120). Much higher than the sign-in limit because a refresh token is 384 random bits and a
+ * Session upkeep (renewing the access token on every page load, signing out): `REFRESH_IP_CEILING` per minute per client
+ * address (default 1200), a backstop only; the real limit is per session (`RefreshLimiter`, `REFRESH_THROTTLE_LIMIT`). Much higher than the sign-in limit because a refresh token is 384 random bits and a
  * reload or a busy office makes many legitimate calls; a flood is still stopped.
  */
 export const SessionThrottle = (): MethodDecorator & ClassDecorator =>
-  applyDecorators(Throttle({ default: { limit: () => Number(process.env.REFRESH_THROTTLE_LIMIT) || 120, ttl: WINDOW_MS, getTracker: byAddress } }));
+  applyDecorators(Throttle({ default: { limit: () => Number(process.env.REFRESH_IP_CEILING) || 1200, ttl: WINDOW_MS, getTracker: byAddress } }));

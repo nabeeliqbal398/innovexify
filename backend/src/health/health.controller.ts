@@ -1,7 +1,7 @@
-import { Controller, Get, ServiceUnavailableException, VERSION_NEUTRAL, Res } from "@nestjs/common";
+import { Controller, Get, Req, ServiceUnavailableException, VERSION_NEUTRAL, Res } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { SkipThrottle } from "@nestjs/throttler";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { PinoLogger } from "nestjs-pino";
 
 import { Public, Roles } from "../common/decorators/auth.decorators";
@@ -50,7 +50,7 @@ export class HealthController {
   @Get("detail")
   @ApiBearerAuth()
   @Roles("ADMIN")
-  detail() {
-    return this.health.detail();
+  detail(@Req() request: Request) {
+    return this.health.detail({ ip: request.ip, socketAddress: request.socket.remoteAddress, xForwardedFor: request.headers["x-forwarded-for"] });
   }
 }

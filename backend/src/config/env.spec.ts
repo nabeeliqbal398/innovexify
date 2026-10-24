@@ -71,7 +71,8 @@ describe("environment: TRUST_PROXY and limits", () => {
   it("gives refresh its own, much higher default limit than sign-in", () => {
     const env = parseEnv(BASE);
     expect(env.AUTH_THROTTLE_LIMIT).toBe(5);
-    expect(env.REFRESH_THROTTLE_LIMIT).toBe(120);
+    expect(env.REFRESH_THROTTLE_LIMIT).toBe(120); // per session
+    expect(env.REFRESH_IP_CEILING).toBe(1200); // per address, a backstop
     expect(parseEnv({ ...BASE, REFRESH_THROTTLE_LIMIT: "300" }).REFRESH_THROTTLE_LIMIT).toBe(300);
   });
 });

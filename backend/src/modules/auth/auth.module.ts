@@ -9,6 +9,7 @@ import { AuthController } from "./controller/auth.controller";
 import { AuthRepository } from "./repository/auth.repository";
 import { AuthService } from "./service/auth.service";
 import { InvitationService } from "./service/invitation.service";
+import { RefreshLimiter } from "./service/refresh-limiter";
 import { PasswordResetService } from "./service/password-reset.service";
 import { RefreshCookieService } from "./service/refresh-cookie.service";
 import { TokenService } from "./service/token.service";
@@ -32,6 +33,7 @@ import { TokenService } from "./service/token.service";
     InvitationService,
     PasswordResetService,
     RefreshCookieService,
+    RefreshLimiter,
     TokenService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },

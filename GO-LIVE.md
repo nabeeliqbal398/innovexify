@@ -81,11 +81,12 @@ Then:
 | --- | --- | --- |
 | `POST /auth/login`, `POST /auth/forgot-password` | `AUTH_THROTTLE_LIMIT` = 5 a minute | client address **and email** (trimmed, lower-case) |
 | `POST /auth/accept-invitation`, the invitation and reset lookups, `change-password`, `reset-password` | 5 a minute | client address |
-| `POST /auth/refresh`, `POST /auth/logout` | `REFRESH_THROTTLE_LIMIT` = 120 a minute | client address |
+| `POST /auth/refresh` | `REFRESH_THROTTLE_LIMIT` = 120 a minute, plus a backstop `REFRESH_IP_CEILING` = 1200 a minute | **session** (refresh-token family), and client address for the ceiling |
+| `POST /auth/logout` | `REFRESH_IP_CEILING` = 1200 a minute | client address |
 | everything else | `THROTTLE_LIMIT` = 100 a minute | client address |
 
 Why it is split this way: the page load renews the access token with `/auth/refresh`, so the old shared limit of 5 a minute meant the sixth reload in a minute from one address got a
-429 (`backend/test/rate-limits.e2e-spec.ts` reproduces it and pins the fix). Sign-in is counted per address **and** email so one attacker address cannot use up everyone's sign-ins, and an
+429 (and a flat per-address 120 would still lock out a large office, so refresh is now counted per session: `backend/test/proxy-and-refresh.e2e-spec.ts` has 200 people behind one address all renewing) (`backend/test/rate-limits.e2e-spec.ts` reproduces it and pins the fix). Sign-in is counted per address **and** email so one attacker address cannot use up everyone's sign-ins, and an
 office behind one shared address does not share one bucket. The per-account lockout (`LOGIN_MAX_ATTEMPTS`, 15 minutes) is unchanged and still stops one account being guessed from many addresses.
 Known limit: one address trying one wrong password against many *different* emails is bounded only by the global 100 a minute; the lockout does not see it. Put a rate limit at the proxy
 (for example nginx `limit_req` on `/api/v1/auth/login`) if that matters to you.
@@ -104,7 +105,10 @@ saw the made-up value). So it does not count as a hop, and the number to set is 
 | Two reverse proxies that each append (a CDN, then nginx) | `2` | One entry each |
 
 Too low and everybody shares one address bucket; too high and a caller can choose their own. **Never set `1` without a reverse proxy that writes the header**, and make sure ports 3000 and 4000 are
-reachable only through it. Check after deploy: 6 wrong passwords for one email from your machine are refused on the sixth while a different email is not; then send the same wrong password for one email
+reachable only through it. **Check after deploy with `GET /api/health/detail` (Admin).** Its `client` block shows what the server sees for *your* request: `ip` should be your own address (not the proxy's) and `trustProxy` the value you meant
+(`socketAddress` is always the proxy). If `ip` is the proxy's address, the value is too low; if it changes when you send your own `X-Forwarded-For` header straight to the API, it is too high or the
+port is exposed. `backend/test/proxy-and-refresh.e2e-spec.ts` shows both outcomes behind a fake proxy: with `false`, 200 users with different forwarded addresses share one bucket; with `1`, they do not.
+Also: 6 wrong passwords for one email from your machine are refused on the sixth while a different email is not; then send the same wrong password for one email
 with a made-up header each time (`curl -H "X-Forwarded-For: 1.2.3.$i" ...`): the sixth must still be refused. The stack test recorded in item 17 does exactly this.
 
 ## 3. Refresh cookie (Done in code)
@@ -125,6 +129,28 @@ JSON, for non-browser clients only).
 
 Keep `.env` out of git (it is ignored), out of images (`.dockerignore`), and in a secret manager (Docker/Kubernetes secrets, a cloud vault) rather than on disk when you can.
 
+## First run on an empty production database: the exact order
+
+Do these in this order, once. Each step is safe to repeat. Run them from the folder with `docker-compose.yml` and a filled-in `.env`.
+
+```
+# 1. Create the tables (the API container does this itself on start when MIGRATE_ON_START is true; do it explicitly first if you set it to false)
+docker compose up -d db
+docker compose run --rm -e MIGRATE_ON_START=false api node node_modules/prisma/build/index.js migrate deploy
+docker compose up -d --build                       # api and web; the api refuses to start without the SMTP settings (item 6)
+
+# 2. The first Admin (refuses if an Admin already exists)
+docker compose exec -e ADMIN_EMAIL=owner@yourcompany.com -e ADMIN_NAME="Olive Owner" -e ADMIN_PASSWORD='<a long, unique passphrase>' api npm run admin:create
+
+# 3. The default service catalog (inserts only; refuses to overwrite a service someone edited; creates no clients, tasks or documents)
+docker compose exec api npm run bootstrap:catalog
+```
+
+4. **Then the Admin signs in and invites staff** from **Staff & Invitations** (a second Admin first, then Managers, CSRs, Compliance). Clients are invited by their CSR or a Manager once the catalog exists.
+
+`bootstrap:catalog` prints how many services it added, how many were already there and how many were edited and left alone. Run it again after an upgrade that adds services and it
+adds only the new ones. Order matters: inviting a client before step 3 fails with "We couldn't find the service \"llc\"". The development seed is **not** part of this (it refuses production).
+
 ## 5. The first Admin account (Done in code)
 
 Production has no seed data. **`prisma/seed.ts` refuses to run when `NODE_ENV=production`** and there is no switch to override it (`backend/src/cli/seed-guard.spec.ts` runs the real file and checks the refusal),
@@ -139,7 +165,7 @@ the email is taken, hashes the password with Argon2id and writes "Created the fi
 (the last active Admin cannot be suspended or removed). The command line stays in your shell history: use a long one-off password and change it from **Settings** after signing in, or, if you forget it, use
 **Forgot password?** (item 6) once email works.
 
-**First-run catch:** a fresh production database has **no services** (the demo catalog comes from the seed). Inviting a client defaults to the service `llc`, so the first invitation fails with
+**First-run catch (handled by `npm run bootstrap:catalog`, see the first-run order above):** a fresh production database has **no services** (the demo catalog comes from the seed). Inviting a client defaults to the service `llc`, so the first invitation fails with
 "We couldn't find the service "llc"" until an Admin adds one under **Services** (`POST /services`; its id is made from the name, so a service called `LLC` gets the id `llc`). Add your real catalog
 before inviting anyone.
 
@@ -213,7 +239,7 @@ Two probes, both public and both answering **pass or fail only** (no host names,
 - `GET /api/health/ready`: readiness, for the uptime monitor. `200` with `{"status":"ok","checks":{"database":{"ok":true},"storage":{"ok":true},"mail":{"ok":true,"configured":true},"scanner":{"ok":true,"enabled":false}}}`,
   or `503` with `"status":"unavailable"` and the failing check marked `"ok":false`. It checks that the database answers, that storage is writable (a probe file is written and removed), that mail is configured, and,
   with `VIRUS_SCANNER=clamav`, that ClamAV answers a PING. It is throttled like any public route, so poll it once a minute, not once a second.
-- `GET /api/health/detail` (Admin only): the same plus the settings behind it (mail transport and host, scanner, proxy hops, CORS origins). Never shows a password.
+- `GET /api/health/detail` (Admin only): the same plus the settings behind it (mail transport and host, scanner, proxy hops, CORS origins) and the address the server sees for your request (item 2). Never shows a password.
 
 Monitor `https://crm.example.com/api/health/ready` every minute from outside your network (UptimeRobot, Better Stack, a cloud check) and page on two failures in a row; alert on the **keyword** `"status":"ok"` missing,
 not just the HTTP code. Also monitor the certificate expiry date and the free space on the database and uploads disks.

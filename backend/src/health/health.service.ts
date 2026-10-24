@@ -29,6 +29,11 @@ export interface HealthDetail extends ReadinessReport {
   storage: { kind: string; writable: boolean };
   scanner: { kind: "none" | "clamav"; reachable: boolean | null };
   proxyHops: number | false;
+  /**
+   * The caller as this server sees them, for checking TRUST_PROXY after a deploy: with the right value, `ip` is YOUR address and changes when you
+   * send a different X-Forwarded-For only if a proxy you trust added it.
+   */
+  client: { ip: string; socketAddress: string; xForwardedFor: string | null; trustProxy: number | false };
   corsOrigins: string[];
 }
 
@@ -66,7 +71,7 @@ export class HealthService {
     };
   }
 
-  async detail(): Promise<HealthDetail> {
+  async detail(caller: { ip?: string; socketAddress?: string; xForwardedFor?: string | string[] }): Promise<HealthDetail> {
     const report = await this.readiness();
     const { env } = this.config;
     return {
@@ -77,6 +82,12 @@ export class HealthService {
       storage: { kind: "local-disk", writable: report.checks.storage.ok },
       scanner: { kind: env.VIRUS_SCANNER, reachable: env.VIRUS_SCANNER === "clamav" ? report.checks.scanner.ok : null },
       proxyHops: env.TRUST_PROXY,
+      client: {
+        ip: caller.ip ?? "unknown",
+        socketAddress: caller.socketAddress ?? "unknown",
+        xForwardedFor: Array.isArray(caller.xForwardedFor) ? caller.xForwardedFor.join(", ") : (caller.xForwardedFor ?? null),
+        trustProxy: env.TRUST_PROXY,
+      },
       corsOrigins: env.CORS_ORIGINS,
     };
   }

@@ -43,6 +43,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       AUTH_THROTTLE_LIMIT: ${AUTH_THROTTLE_LIMIT:-5}
       REFRESH_THROTTLE_LIMIT: ${REFRESH_THROTTLE_LIMIT:-120}
+      REFRESH_IP_CEILING: ${REFRESH_IP_CEILING:-1200}
       PASSWORD_RESET_TTL_MINUTES: ${PASSWORD_RESET_TTL_MINUTES:-30}
       # Production sends real email: the API refuses to start with MAIL_TRANSPORT=log, or with smtp and any of these missing.
       # (To try the stack on one machine without a mail provider: docker-compose.local-mail.yml.)

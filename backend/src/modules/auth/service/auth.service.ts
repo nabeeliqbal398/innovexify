@@ -18,6 +18,7 @@ import { AuditService } from "../../../common/audit/audit.service";
 import { AppConfig } from "../../../config/app-config";
 import type { AuthSession, ClientContext, SessionUser } from "../interfaces/auth.interfaces";
 import { AuthRepository, type SessionUserRecord } from "../repository/auth.repository";
+import { RefreshLimiter } from "./refresh-limiter";
 import { TokenService } from "./token.service";
 
 const DAY_MS = 86_400_000;
@@ -35,6 +36,7 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly audit: AuditService,
     private readonly config: AppConfig,
+    private readonly refreshLimiter: RefreshLimiter,
   ) {}
 
   async login(email: string, password: string, ctx: ClientContext): Promise<AuthSession> {
@@ -85,6 +87,9 @@ export class AuthService {
       await this.repo.revokeFamily(stored.familyId);
       throw new TokenExpiredException();
     }
+
+    // A live token of a known session: limit by session, not by address (many people can share an address).
+    this.refreshLimiter.consume(stored.familyId);
 
     const user = await this.repo.findSessionUser(stored.userId);
     if (!user || user.status !== "ACTIVE") {

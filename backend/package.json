@@ -21,7 +21,8 @@
     "test:db": "node scripts/setup-test-db.js",
     "test:db:e2e": "node scripts/setup-test-db.js e2e --reset",
     "test:e2e": "node scripts/setup-test-db.js && jest --config test/jest-e2e.config.js",
-    "admin:create": "node dist/cli/create-admin.js"
+    "admin:create": "node dist/cli/create-admin.js",
+    "bootstrap:catalog": "node dist/cli/bootstrap-catalog.js"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"

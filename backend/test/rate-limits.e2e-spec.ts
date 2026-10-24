@@ -32,8 +32,8 @@ describe("rate limits (e2e)", () => {
       }
     });
 
-    it("has its own limit (REFRESH_THROTTLE_LIMIT) that still stops a flood", async () => {
-      const limited = await createApp({ REFRESH_THROTTLE_LIMIT: "3" });
+    it("has a per-address ceiling (REFRESH_IP_CEILING) that still stops a flood", async () => {
+      const limited = await createApp({ REFRESH_IP_CEILING: "3" });
       try {
         const statuses: number[] = [];
         for (let i = 0; i < 5; i++) {

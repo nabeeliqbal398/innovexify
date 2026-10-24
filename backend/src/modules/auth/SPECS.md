@@ -15,8 +15,8 @@ All paths are under `/api/v1`. Every response uses the standard envelope.
 | Method | Route | Auth, limit | Request | Response `data` |
 | --- | --- | --- | --- | --- |
 | POST | `/auth/login` | public, 5/min per address **and email** | `{ email, password }` | `{ accessToken, expiresIn, refreshToken, user }` |
-| POST | `/auth/refresh` | public, `REFRESH_THROTTLE_LIMIT` (120)/min per address | `{ refreshToken }` | new `{ accessToken, expiresIn, refreshToken, user }` |
-| POST | `/auth/logout` | public, 120/min per address (same limit as refresh) | `{ refreshToken }` | `null` (idempotent) |
+| POST | `/auth/refresh` | public, `REFRESH_THROTTLE_LIMIT` (120)/min per **session**, `REFRESH_IP_CEILING` (1200)/min per address | `{ refreshToken }` | new `{ accessToken, expiresIn, refreshToken, user }` |
+| POST | `/auth/logout` | public, `REFRESH_IP_CEILING` (1200)/min per address | `{ refreshToken }` | `null` (idempotent) |
 | POST | `/auth/logout-all` | bearer | none | `{ sessionsEnded }` |
 | POST | `/auth/change-password` | bearer, 5/min per address | `{ currentPassword, newPassword }` | `{ otherSessionsEnded }` |
 | GET | `/auth/me` | bearer | none | `{ id, email, name, role, status, clientProfile }` |
@@ -46,10 +46,10 @@ All paths are under `/api/v1`. Every response uses the standard envelope.
     shared (NAT) address does not share one bucket between its people. Per-account lockout (above) still protects the account
     itself, whatever address the guesses come from.
   - `/auth/accept-invitation`, the lookups, `/auth/change-password`, `/auth/reset-password`: the client address.
-  - `/auth/refresh` and `/auth/logout`: the client address, at `REFRESH_THROTTLE_LIMIT` (default 120/min). A page load renews
-    the access token, so reloading or a busy office legitimately makes many calls; a refresh token is 384 random bits, so
-    guessing it is not what this limit is for. (Before this setting the refresh route shared the 5/min sign-in limit and the
-    sixth reload in a minute from one address got a 429: `test/rate-limits.e2e-spec.ts` pins the fix.)
+  - `/auth/refresh`: counted **per session** (the refresh-token family), `REFRESH_THROTTLE_LIMIT` (default 120/min), but only once a live
+    token has been recognised, so a refusal never rotates or revokes the token and people sharing an office address never share it. Unrecognised
+    tokens are limited only by a per-address ceiling, `REFRESH_IP_CEILING` (default 1200/min), a backstop against floods. `/auth/logout` uses the
+    ceiling alone. (Before this, refresh was 5/min per address, then 120/min per address: a busy office could still lock itself out.)
   - **The client address** is `request.ip`. With `TRUST_PROXY=false` (default) that is the socket address and
     `X-Forwarded-For` is ignored. With `TRUST_PROXY=N` it is the entry N hops from the right of `X-Forwarded-For`, so entries a
     client writes itself are never believed. `TRUST_PROXY=true` means 1. Count the reverse proxies you run in front of the stack that add the

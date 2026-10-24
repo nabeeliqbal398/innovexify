@@ -10,7 +10,8 @@ A client, case and compliance portal for business-formation services. One git re
 | `docker-compose.local-mail.yml` | Optional: a catch-all mail server for trying that stack on one machine |
 | `scripts/` | `backup.sh` / `backup.ps1` and `RESTORE.md` |
 | `.github/workflows/ci.yml` | CI: type check, lint, unit, e2e and browser tests, build and dependency audit for both apps |
-| `GO-LIVE.md` | What is still needed before real clients use it |
+| `GO-LIVE.md` | What is still needed before real clients use it, and the exact first-run order on an empty database |
+| `STAGING.md` | The staging set-up steps and a 30-item manual test list covering every role |
 
 The repository was put together from three earlier ones (root, backend, frontend) with their histories kept: the first-parent line is this repository's own
 history, and the tags `pre-merge/backend` and `pre-merge/frontend` point at the last commit of each earlier history (`git log pre-merge/backend`).

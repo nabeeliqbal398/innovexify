@@ -40,6 +40,7 @@ pgAdmin is optional: `docker compose --profile tools up -d pgadmin` (http://127.
 | Script | What it does |
 | --- | --- |
 | `npm run admin:create` | Creates the first Admin of a new installation from `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` (refuses when an Admin exists). Use it in production, where there is no seed data. Runs from the build: `node dist/cli/create-admin.js` |
+| `npm run bootstrap:catalog` | Adds the default service catalog (the same services as the seed, no demo data) to a fresh database. Inserts only, never overwrites an edited service, safe to repeat and safe in production. Runs from the build: `node dist/cli/bootstrap-catalog.js` |
 | `bash scripts/with-test-lock.sh <command>` | Runs a command while holding a lock on the shared test database, so two people never run e2e tests at once |
 | `bash scripts/restart-api.sh` | Rebuilds and restarts the development API (used before `npm run api:types` in the frontend) |
 
