@@ -213,27 +213,6 @@ export function can(
   return true;
 }
 
-export const ACCESS_MATRIX: ReadonlyArray<readonly [string, Permission]> = [
-  ["Invite Managers", "inviteMANAGER"],
-  ["Invite CSRs", "inviteCSR"],
-  ["Invite Compliance", "inviteCOMPLIANCE"],
-  ["Invite clients", "inviteCLIENT"],
-  ["Update users' email", "updateEmail"],
-  ["Remove users from the portal", "removeUser"],
-  ["Change company name and logo", "branding"],
-  ["Assign a new client to a CSR", "assignNewClient"],
-  ["Reassign an existing client", "reassignClient"],
-  ["Open client documents", "docsAccess"],
-  ["Upload or request documents", "docsManage"],
-  ["Client team conversations", "conversation"],
-  ["Send reports to Compliance", "reportSend"],
-  ["Review CSR reports", "reportReview"],
-  ["Publish announcements", "announce"],
-  ["Create projects, move any stage", "manageProjects"],
-  ["Handle tickets (staff)", "ticketsStaff"],
-  ["Company-wide settings", "companySettings"],
-];
-
 /** Map a permission to an audit-log category, used to filter the audit table. */
 export function auditCategoryOf(perm?: Permission): string {
   if (!perm) return "";

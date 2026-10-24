@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { AccessRail } from "@/components/features/workspace/access-rail";
 import { ConflictDialog } from "@/components/features/workspace/conflict-dialog";
 import { DeniedDialog } from "@/components/features/workspace/denied-dialog";
 import { GlobalSearch } from "@/components/features/workspace/global-search";
@@ -44,7 +43,6 @@ export function WorkspaceShell({ view, id, children }: { view: string; id?: stri
   const company = useCompanyQuery().data ?? { name: "Innovexify", logo: "", casePrefix: "CASE" };
   const nav = useWorkspaceNav(view, id);
   const crumbs = useCrumbs(nav, company.name);
-  const [railOpen, setRailOpen] = useState(true);
   const [menu, setMenu] = useState<"notifications" | "search" | null>(null);
   const isStaff = me.role !== "CLIENT";
   const unread = useUnreadCount();
@@ -54,10 +52,6 @@ export function WorkspaceShell({ view, id, children }: { view: string; id?: stri
     await signOut(dispatch);
     router.replace("/");
   };
-
-  useEffect(() => {
-    if (window.innerWidth < 1180) setRailOpen(false);
-  }, []);
 
   useEffect(() => {
     setMenu(null);
@@ -117,10 +111,6 @@ export function WorkspaceShell({ view, id, children }: { view: string; id?: stri
             ) : null}
           </Button>
         </div>
-        <Button size="sm" aria-label="Access & scenarios" aria-pressed={railOpen} onClick={() => setRailOpen((o) => !o)}>
-          <Icon name="shield" small />
-          <span className="max-[640px]:hidden">Access &amp; scenarios</span>
-        </Button>
         {menu ? <div aria-hidden="true" className="fixed inset-0 z-20" onClick={() => setMenu(null)} /> : null}
         {menu === "notifications" ? <NotificationsMenu nav={nav} onClose={() => setMenu(null)} /> : null}
       </header>
@@ -157,7 +147,6 @@ export function WorkspaceShell({ view, id, children }: { view: string; id?: stri
           </nav>
           {children}
         </main>
-        {railOpen ? <AccessRail /> : null}
       </div>
       <DeniedDialog />
       <ConflictDialog />

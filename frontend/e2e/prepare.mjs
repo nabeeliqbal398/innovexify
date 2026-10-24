@@ -34,7 +34,6 @@ if (!process.env.E2E_SKIP_BUILD) {
   run("npx next build", frontend, {
     API_ORIGIN: `http://localhost:${API_PORT}`,
     NEXT_DIST_DIR: ".next-e2e",
-    NEXT_PUBLIC_ENABLE_DEMO_TOOLS: "true",
     NEXT_PUBLIC_E2E_HOOKS: "true",
   });
 }

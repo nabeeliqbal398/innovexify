@@ -20,7 +20,7 @@ What stands between "it works on a laptop" and "real clients use it". Each item 
 | 13 | Migrations as a separate release step | Done in code, needs a pipeline |
 | 14 | Rollback plan | Needs a decision |
 | 15 | Password reset by email (done) and two-factor sign-in | Reset done in code; two-factor needs a decision (not built) |
-| 16 | Demo tools and seed data off | Done in code |
+| 16 | Seed data and demo tooling off | Done in code |
 | 17 | Security headers, CORS, API docs, dependency and secret scanning | Done in code and CI; read the open points |
 
 ---
@@ -270,9 +270,9 @@ Decide who may trigger a rollback and how long you accept being down (this sets 
 Password reset by email is built (item 6). **Two-factor sign-in is still not built.** It is small to add (TOTP with recovery codes) but needs a decision on whether Admins must use it, what happens when someone
 loses their device (an Admin resets it, which is itself a takeover path to protect), and whether clients get it too.
 
-## 16. Demo tools and seed data off (Done in code)
+## 16. Seed data and demo tooling off (Done in code)
 
-- `NEXT_PUBLIC_ENABLE_DEMO_TOOLS` must be `false` (the default) in production: it only shows buttons that fire test requests at the seeded demo records.
+- There are no demo buttons in the web app any more (the "Access & scenarios" panel and its `NEXT_PUBLIC_ENABLE_DEMO_TOOLS` flag were removed); the Admin's **Audit & Security → Security overview** still shows the access policy table from `GET /api/v1/access/matrix`.
 - The seed refuses to run in production (item 5); do not copy a development database either.
 - `/api/docs`, `/api/docs-json` and `/api/docs-yaml` (Swagger) are not mounted when `NODE_ENV=production`.
 - Set `LOG_LEVEL=info`.

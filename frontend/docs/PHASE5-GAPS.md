@@ -33,3 +33,4 @@ Each row: what a screen needed that the API did not give, and what was added (sm
 | A list of "other sessions / devices" | The API only offers "sign out everywhere" (`POST /auth/logout-all`), which is what the screen now offers. |
 | Recent activity on the Manager, CSR and Compliance overview | It comes from the audit log, which is Admin-only. |
 | SVG logos and logos up to 2 MB | The server accepts PNG or JPEG up to 200 KB (an SVG can carry script). |
+| The "Access & scenarios" side panel (a per-role capability list and "simulate a direct request" buttons) | Removed after Phase 7. Access rules are shown in **Audit & Security → Security overview**, which reads `GET /api/v1/access/matrix`; the server refusing crafted requests is covered by the backend and Playwright tests. |
