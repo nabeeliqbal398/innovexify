@@ -78,7 +78,8 @@ export class HealthService {
       ...report,
       environment: env.NODE_ENV,
       uptimeSeconds: Math.round(process.uptime()),
-      mail: { transport: env.MAIL_TRANSPORT, configured: this.mailConfigured, host: env.SMTP_HOST ?? null, port: env.SMTP_PORT ?? null, from: env.MAIL_FROM ?? null },
+      // SMTP settings are shown only when SMTP is what is in use (a leftover value in .env is not a setting that does anything).
+      mail: { transport: env.MAIL_TRANSPORT, configured: this.mailConfigured, ...(env.MAIL_TRANSPORT === "smtp" ? { host: env.SMTP_HOST ?? null, port: env.SMTP_PORT ?? null, from: env.MAIL_FROM ?? null } : { host: null, port: null, from: null }) },
       storage: { kind: "local-disk", writable: report.checks.storage.ok },
       scanner: { kind: env.VIRUS_SCANNER, reachable: env.VIRUS_SCANNER === "clamav" ? report.checks.scanner.ok : null },
       proxyHops: env.TRUST_PROXY,

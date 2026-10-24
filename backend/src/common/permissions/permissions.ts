@@ -1,4 +1,8 @@
-import type { Role } from "@prisma/client";
+/**
+ * This file imports nothing, on purpose: the web app's tests load it directly (frontend/tests/unit/permissions-parity.test.ts) and run without
+ * the backend's packages installed. `role-parity.spec.ts` fails the backend build if this list ever differs from the Role enum in schema.prisma.
+ */
+export type Role = "ADMIN" | "MANAGER" | "CSR" | "COMPLIANCE" | "CLIENT";
 
 /**
  * Ported from frontend/src/lib/permissions.ts: same permission names, same resource rules, same REASON text.
